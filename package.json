@@ -1,0 +1,16 @@
+{
+  "name": "mini-tv-alert-engine-ws",
+  "type": "module",
+  "dependencies": {
+    "add": "^2.0.6",
+    "burn": "^0.1.0",
+    "dotenv": "^17.2.1",
+    "node-fetch": "^3.3.2",
+    "pnpm": "^10.15.0",
+    "ws": "^8.18.0",
+    "yarn": "^1.22.22"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
