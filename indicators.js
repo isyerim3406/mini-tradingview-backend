@@ -28,7 +28,6 @@ export const calculateEMA = (source, len) => {
 };
 
 export const calculateRMA = (source, len) => {
-  // RMA'nın doğrudan bir fonksiyonu olmadığı için EMA formülü kullanılır
   if (source.length < len) return null;
   return EMA.calculate({ period: len, values: source });
 };
@@ -64,6 +63,7 @@ export const calculateLSMA = (source, len) => {
 };
 
 export const calculateKiJun = (source, len) => {
+  // TradingView stratejinizdeki Kijun-sen mantığı
   if (source.length < len) return null;
   let high = 0;
   let low = Infinity;
