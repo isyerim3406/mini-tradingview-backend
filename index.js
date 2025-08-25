@@ -18,7 +18,7 @@ import {
 dotenv.config();
 
 const CFG = {
-  SYMBOL: process.env.SYMBOL || 'ETHUSDT', // örnek ETHUSDT perpetual
+  SYMBOL: process.env.SYMBOL || 'ETHUSDT',
   INTERVAL: process.env.INTERVAL || '3m',
   TG_TOKEN: process.env.TG_TOKEN,
   TG_CHAT_ID: process.env.TG_CHAT_ID,
@@ -52,52 +52,81 @@ const getIndicator = (source, len) => {
   }
 };
 
-// ATR, SSL ve BBMC hesaplama fonksiyonları aynı
-
 const getSignal = () => {
   if (CFG.ENTRY_SIGNAL_TYPE === 'BBMC_ATR') return getBbmcATR();
   if (CFG.ENTRY_SIGNAL_TYPE === 'SSL1') return getSslSignal();
   return null;
 };
 
-// 🔹 Render uyumlu WebSocket
-const ws = new WebSocket(
-  `wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`
-);
+// 🔹 Reconnect mantığı
+let ws;
+let reconnectTimeout = null;
 
-ws.onopen = () => console.log('WS open');
-ws.onclose = () => console.log('WS closed');
+function connectWS() {
+  ws = new WebSocket(
+    `wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`
+  );
 
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  const kline = data.k;
-  if (!kline || !kline.x) return;
+  ws.onopen = () => {
+    console.log('✅ WebSocket connected');
+    if (reconnectTimeout) {
+      clearTimeout(reconnectTimeout);
+      reconnectTimeout = null;
+    }
+  };
 
-  marketData.push({
-    open: parseFloat(kline.o),
-    high: parseFloat(kline.h),
-    low: parseFloat(kline.l),
-    close: parseFloat(kline.c),
-    volume: parseFloat(kline.v),
-  });
+  ws.onclose = () => {
+    console.log('⚠️ WebSocket closed, reconnecting in 5s...');
+    scheduleReconnect();
+  };
 
-  if (marketData.length > 200) marketData.shift();
+  ws.onerror = (err) => {
+    console.error('❌ WebSocket error:', err.message);
+    ws.close();
+  };
 
-  const signal = getSignal();
-  const time = new Date().toLocaleString();
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    const kline = data.k;
+    if (!kline || !kline.x) return;
 
-  if (signal === 'buy' && lastTelegramMessage !== 'buy') {
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - BUY signal for ${CFG.SYMBOL}!`);
-    lastTelegramMessage = 'buy';
-    console.log('BUY signal sent!');
-  } else if (signal === 'sell' && lastTelegramMessage !== 'sell') {
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
-    lastTelegramMessage = 'sell';
-    console.log('SELL signal sent!');
-  }
-};
+    marketData.push({
+      open: parseFloat(kline.o),
+      high: parseFloat(kline.h),
+      low: parseFloat(kline.l),
+      close: parseFloat(kline.c),
+      volume: parseFloat(kline.v),
+    });
 
-// Basit HTTP server, Render keep-alive
+    if (marketData.length > 200) marketData.shift();
+
+    const signal = getSignal();
+    const time = new Date().toLocaleString();
+
+    if (signal === 'buy' && lastTelegramMessage !== 'buy') {
+      sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - BUY signal for ${CFG.SYMBOL}!`);
+      lastTelegramMessage = 'buy';
+      console.log('BUY signal sent!');
+    } else if (signal === 'sell' && lastTelegramMessage !== 'sell') {
+      sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
+      lastTelegramMessage = 'sell';
+      console.log('SELL signal sent!');
+    }
+  };
+}
+
+function scheduleReconnect() {
+  if (reconnectTimeout) return;
+  reconnectTimeout = setTimeout(() => {
+    console.log('🔄 Trying to reconnect...');
+    connectWS();
+  }, 5000); // 5 saniye sonra tekrar bağlanmayı dene
+}
+
+// Başlat
+connectWS();
+
+// Basit HTTP server, Koyeb keep-alive
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
