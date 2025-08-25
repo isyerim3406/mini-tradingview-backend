@@ -93,26 +93,24 @@ const getBbmcATR = () => {
   let buySignal = false;
   let sellSignal = false;
 
-  // BUY sinyali için ardışık kapanış kontrolü
   let consecutiveBuys = 0;
   for (let i = marketData.length - 1; i >= 0 && i > marketData.length - 1 - CFG.M_BARS_BUY; i--) {
     if (marketData[i].close > up[i]) {
       consecutiveBuys++;
     } else {
-      break; // Ardışıklık bozulduğunda döngüden çık
+      break;
     }
   }
   if (consecutiveBuys >= CFG.M_BARS_BUY) {
     buySignal = true;
   }
 
-  // SELL sinyali için ardışık kapanış kontrolü
   let consecutiveSells = 0;
   for (let i = marketData.length - 1; i >= 0 && i > marketData.length - 1 - CFG.N_BARS_SELL; i--) {
     if (marketData[i].close < down[i]) {
       consecutiveSells++;
     } else {
-      break; // Ardışıklık bozulduğunda döngüden çık
+      break;
     }
   }
   if (consecutiveSells >= CFG.N_BARS_SELL) {
@@ -186,7 +184,6 @@ function connectWS() {
     const kline = data.k;
     if (!kline || !kline.x) return;
 
-    // Loglama kodları
     console.log(
       `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
     );
@@ -202,7 +199,6 @@ function connectWS() {
 
     if (marketData.length > 200) marketData.shift();
 
-    // MA'nın yönünü kontrol et ve logla
     const ma = getIndicator(marketData, CFG.SSL1LEN);
     if (ma && ma.length > 1) {
       const direction = ma[ma.length - 1] > ma[ma.length - 2] ? 'UP' : 'DOWN';
@@ -222,6 +218,8 @@ function connectWS() {
       sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
       lastTelegramMessage = 'sell';
       console.log('SELL signal sent!');
+    } else if (signal === null) {
+      lastTelegramMessage = null;
     }
   };
 }
@@ -237,7 +235,6 @@ function scheduleReconnect() {
 // Start
 connectWS();
 
-// Simple HTTP server for Render keep-alive
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
