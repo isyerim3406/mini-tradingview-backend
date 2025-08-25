@@ -2,6 +2,7 @@ import { WebSocket } from 'ws';
 import { sendTelegramMessage } from './telegram.js';
 import dotenv from 'dotenv';
 import http from 'http';
+import axios from 'axios';
 import {
   calculateEMA,
   calculateSMA,
@@ -36,6 +37,8 @@ const CFG = {
 
 const marketData = [];
 let lastTelegramMessage = '';
+let ws;
+let reconnectTimeout = null;
 
 const getIndicator = (source, len) => {
   switch (CFG.MA_TYPE) {
@@ -89,7 +92,6 @@ const getBbmcATR = () => {
     down.push(ma[i] - atr[i] * CFG.ATR_MULT);
   }
 
-  // TradingView'daki ardışık kapanış mantığına uygun yeni kod
   let buySignal = false;
   let sellSignal = false;
 
@@ -152,9 +154,36 @@ const getSignal = () => {
   return null;
 };
 
-// Reconnect logic
-let ws;
-let reconnectTimeout = null;
+// Yeni bir başlangıç fonksiyonu oluşturuyoruz
+async function startBot() {
+  console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
+  try {
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=200`;
+    const response = await axios.get(url);
+    const klines = response.data;
+
+    klines.forEach(kline => {
+      marketData.push({
+        open: parseFloat(kline[1]),
+        high: parseFloat(kline[2]),
+        low: parseFloat(kline[3]),
+        close: parseFloat(kline[4]),
+        volume: parseFloat(kline[5]),
+      });
+    });
+
+    console.log(`✅ ${marketData.length} adet geçmiş mum verisi başarıyla yüklendi.`);
+
+    // Geçmiş veri yüklendikten sonra WebSocket'i başlat
+    connectWS();
+
+  } catch (error) {
+    console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
+    console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
+    // Hata durumunda sadece canlı akışla devam et
+    connectWS();
+  }
+}
 
 function connectWS() {
   ws = new WebSocket(
@@ -232,8 +261,8 @@ function scheduleReconnect() {
   }, 5000);
 }
 
-// Start
-connectWS();
+// Botu başlatmak için yeni fonksiyonu çağırıyoruz
+startBot();
 
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
