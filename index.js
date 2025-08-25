@@ -7,7 +7,6 @@ import {
   calculateSMA,
   calculateRMA,
   calculateWMA,
-  calculateDEMA,
   calculateTEMA,
   calculateTMA,
   calculateHMA,
