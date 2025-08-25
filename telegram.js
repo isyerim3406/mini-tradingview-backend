@@ -1,26 +1,16 @@
-import fetch from 'node-fetch';
+import { Telegraf } from 'telegraf';
 
-export async function sendTelegramMessage(token, chatId, message) {
-  const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  const data = {
-    chat_id: chatId,
-    text: message,
-  };
+export const sendTelegramMessage = async (token, chatId, message) => {
+  if (!token || !chatId) {
+    console.log('Telegram token or chat ID is not set. Skipping message.');
+    return;
+  }
+
+  const bot = new Telegraf(token);
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
-
-    const result = await response.json();
-    if (!result.ok) {
-      console.error('Telegram API error:', result.description);
-    }
-  } catch (error) {
-    console.error('Telegram\'a mesaj gönderilemedi:', error);
+    await bot.telegram.sendMessage(chatId, message);
+  } catch (err) {
+    console.error(`Failed to send Telegram message: ${err.message}`);
   }
-}
+};
