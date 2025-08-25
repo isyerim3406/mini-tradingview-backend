@@ -52,12 +52,91 @@ const getIndicator = (source, len) => {
   }
 };
 
-const getSignal = () => {
-  if (CFG.ENTRY_SIGNAL_TYPE === 'BBMC_ATR') return getBbmcATR();
+function getAtr(source, len) {
+  let trs = [];
+  let atrs = [];
+  for (let i = 1; i < source.length; i++) {
+    let tr = Math.max(
+      source[i].high - source[i].low,
+      Math.abs(source[i].high - source[i - 1].close),
+      Math.abs(source[i].low - source[i - 1].close)
+    );
+    trs.push(tr);
+  }
+  if (CFG.ATR_SMOOTHING === 'RMA') {
+    atrs = calculateRMA(trs, len);
+  } else if (CFG.ATR_SMOOTHING === 'EMA') {
+    atrs = calculateEMA(trs, len);
+  } else if (CFG.ATR_SMOOTHING === 'WMA') {
+    atrs = calculateWMA(trs, len);
+  } else {
+    atrs = calculateSMA(trs, len);
+  }
+  return atrs;
+}
+
+const getBbmcATR = () => {
+  const ma = getIndicator(marketData, CFG.SSL1LEN);
+  if (!ma) return;
+
+  const atr = getAtr(marketData, CFG.ATR_LEN);
+  const up = [];
+  const down = [];
+  for (let i = 0; i < ma.length; i++) {
+    up.push(ma[i] + atr[i] * CFG.ATR_MULT);
+    down.push(ma[i] - atr[i] * CFG.ATR_MULT);
+  }
+  let buySignal = false;
+  let sellSignal = false;
+  let buyCount = 0;
+  let sellCount = 0;
+  for (let i = marketData.length - CFG.M_BARS_BUY; i < marketData.length; i++) {
+    if (marketData[i].close > up[i]) {
+      buyCount++;
+    }
+  }
+  for (let i = marketData.length - CFG.N_BARS_SELL; i < marketData.length; i++) {
+    if (marketData[i].close < down[i]) {
+      sellCount++;
+    }
+  }
+  if (buyCount >= CFG.M_BARS_BUY) buySignal = true;
+  if (sellCount >= CFG.N_BARS_SELL) sellSignal = true;
+  if (buySignal) return 'buy';
+  if (sellSignal) return 'sell';
+};
+
+const getSsl = (source, len) => {
+  const ma = getIndicator(source, len);
+  if (!ma) return;
+  const hlv = [];
+  for (let i = 0; i < ma.length; i++) {
+    if (i === 0) {
+      hlv.push(1);
+    } else {
+      hlv.push(ma[i] > ma[i - 1] ? 1 : -1);
+    }
+  }
+  return hlv;
+};
+
+const getSslSignal = () => {
+  const hlv = getSsl(marketData, CFG.SSL1LEN);
+  if (!hlv) return;
+  const isBuySignal = hlv[hlv.length - 1] === 1 && hlv[hlv.length - 2] === -1;
+  const isSellSignal = hlv[hlv.length - 1] === -1 && hlv[hlv.length - 2] === 1;
+  if (isBuySignal) return 'buy';
+  if (isSellSignal) return 'sell';
   return null;
 };
 
-// 🔹 Reconnect mantığı
+const getSignal = () => {
+  if (CFG.ENTRY_SIGNAL_TYPE === 'BBMC_ATR') return getBbmcATR();
+  if (CFG.ENTRY_SIGNAL_TYPE === 'SSL1') return getSslSignal();
+  return null;
+};
+
+// Reconnect logic
 let ws;
 let reconnectTimeout = null;
 
@@ -119,16 +198,15 @@ function scheduleReconnect() {
   reconnectTimeout = setTimeout(() => {
     console.log('🔄 Trying to reconnect...');
     connectWS();
-  }, 5000); // 5 saniye sonra tekrar bağlanmayı dene
+  }, 5000);
 }
 
-// Başlat
+// Start
 connectWS();
 
-// Basit HTTP server, Koyeb keep-alive
+// Simple HTTP server for Render keep-alive
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
-
