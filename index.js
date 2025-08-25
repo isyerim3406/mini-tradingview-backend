@@ -19,7 +19,7 @@ dotenv.config();
 
 const CFG = {
   SYMBOL: process.env.SYMBOL || 'ETHUSDT',
-  INTERVAL: process.env.INTERVAL || '3m',
+  INTERVAL: process.env.INTERVAL || '1m',
   TG_TOKEN: process.env.TG_TOKEN,
   TG_CHAT_ID: process.env.TG_CHAT_ID,
   ENTRY_SIGNAL_TYPE: process.env.ENTRY_SIGNAL_TYPE || 'BBMC_ATR',
@@ -222,3 +222,4 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
+
