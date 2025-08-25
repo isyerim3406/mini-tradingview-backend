@@ -154,11 +154,11 @@ const getSignal = () => {
   return null;
 };
 
-// Yeni bir başlangıç fonksiyonu oluşturuyoruz
 async function startBot() {
   console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
   try {
-    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=200`;
+    // URL'yi 'fapi' yerine 'api' olarak değiştirdik
+    const url = `https://api.binance.com/api/v3/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=200`;
     const response = await axios.get(url);
     const klines = response.data;
 
@@ -173,14 +173,11 @@ async function startBot() {
     });
 
     console.log(`✅ ${marketData.length} adet geçmiş mum verisi başarıyla yüklendi.`);
-
-    // Geçmiş veri yüklendikten sonra WebSocket'i başlat
     connectWS();
 
   } catch (error) {
     console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
     console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
-    // Hata durumunda sadece canlı akışla devam et
     connectWS();
   }
 }
@@ -261,7 +258,6 @@ function scheduleReconnect() {
   }, 5000);
 }
 
-// Botu başlatmak için yeni fonksiyonu çağırıyoruz
 startBot();
 
 const port = process.env.PORT || 3000;
