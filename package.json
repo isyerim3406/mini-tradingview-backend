@@ -1,16 +1,21 @@
 {
-  "name": "mini-tv-alert-engine-ws",
+  "name": "backend-ws",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
   "type": "module",
-  "dependencies": {
-    "add": "^2.0.6",
-    "burn": "^0.1.0",
-    "dotenv": "^17.2.1",
-    "node-fetch": "^3.3.2",
-    "pnpm": "^10.15.0",
-    "ws": "^8.18.0",
-    "yarn": "^1.22.22"
-  },
   "scripts": {
-    "start": "node index.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2",
+    "telegraf": "^4.16.3",
+    "ws": "^8.17.0",
+    "technicalindicators": "^3.1.0"
   }
 }
