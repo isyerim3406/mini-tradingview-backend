@@ -80,30 +80,48 @@ const getBbmcATR = () => {
   if (!ma) return;
 
   const atr = getAtr(marketData, CFG.ATR_LEN);
+  if (!atr) return;
+
   const up = [];
   const down = [];
   for (let i = 0; i < ma.length; i++) {
     up.push(ma[i] + atr[i] * CFG.ATR_MULT);
     down.push(ma[i] - atr[i] * CFG.ATR_MULT);
   }
+
+  // TradingView'daki ardışık kapanış mantığına uygun yeni kod
   let buySignal = false;
   let sellSignal = false;
-  let buyCount = 0;
-  let sellCount = 0;
-  for (let i = marketData.length - CFG.M_BARS_BUY; i < marketData.length; i++) {
+
+  // BUY sinyali için ardışık kapanış kontrolü
+  let consecutiveBuys = 0;
+  for (let i = marketData.length - 1; i >= 0 && i > marketData.length - 1 - CFG.M_BARS_BUY; i--) {
     if (marketData[i].close > up[i]) {
-      buyCount++;
+      consecutiveBuys++;
+    } else {
+      break; // Ardışıklık bozulduğunda döngüden çık
     }
   }
-  for (let i = marketData.length - CFG.N_BARS_SELL; i < marketData.length; i++) {
+  if (consecutiveBuys >= CFG.M_BARS_BUY) {
+    buySignal = true;
+  }
+
+  // SELL sinyali için ardışık kapanış kontrolü
+  let consecutiveSells = 0;
+  for (let i = marketData.length - 1; i >= 0 && i > marketData.length - 1 - CFG.N_BARS_SELL; i--) {
     if (marketData[i].close < down[i]) {
-      sellCount++;
+      consecutiveSells++;
+    } else {
+      break; // Ardışıklık bozulduğunda döngüden çık
     }
   }
-  if (buyCount >= CFG.M_BARS_BUY) buySignal = true;
-  if (sellCount >= CFG.N_BARS_SELL) sellSignal = true;
+  if (consecutiveSells >= CFG.N_BARS_SELL) {
+    sellSignal = true;
+  }
+
   if (buySignal) return 'buy';
   if (sellSignal) return 'sell';
+  return null;
 };
 
 const getSsl = (source, len) => {
@@ -168,7 +186,7 @@ function connectWS() {
     const kline = data.k;
     if (!kline || !kline.x) return;
 
-    // Yeni eklenen loglama kodları
+    // Loglama kodları
     console.log(
       `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
     );
@@ -192,7 +210,6 @@ function connectWS() {
     }
 
     const signal = getSignal();
-    // Bu satır her veri akışında sinyal durumunu loglar
     console.log(`Güncel sinyal durumu: ${signal}`);
 
     const time = new Date().toLocaleString();
