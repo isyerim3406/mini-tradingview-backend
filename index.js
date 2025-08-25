@@ -54,7 +54,6 @@ const getIndicator = (source, len) => {
 
 const getSignal = () => {
   if (CFG.ENTRY_SIGNAL_TYPE === 'BBMC_ATR') return getBbmcATR();
-  if (CFG.ENTRY_SIGNAL_TYPE === 'SSL1') return getSslSignal();
   return null;
 };
 
@@ -132,3 +131,4 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
+
