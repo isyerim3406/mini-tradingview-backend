@@ -167,7 +167,9 @@ function connectWS() {
     const data = JSON.parse(event.data);
     const kline = data.k;
     if (!kline || !kline.x) return;
-
+console.log(
+  `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
+);
     marketData.push({
       open: parseFloat(kline.o),
       high: parseFloat(kline.h),
@@ -210,3 +212,4 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
+
