@@ -167,9 +167,12 @@ function connectWS() {
     const data = JSON.parse(event.data);
     const kline = data.k;
     if (!kline || !kline.x) return;
-console.log(
-  `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
-);
+
+    // Yeni eklenen loglama kodu
+    console.log(
+      `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
+    );
+
     marketData.push({
       open: parseFloat(kline.o),
       high: parseFloat(kline.h),
@@ -179,6 +182,13 @@ console.log(
     });
 
     if (marketData.length > 200) marketData.shift();
+
+    // MA'nın yönünü kontrol et ve logla
+    const ma = getIndicator(marketData, CFG.SSL1LEN);
+    if (ma && ma.length > 1) {
+      const direction = ma[ma.length - 1] > ma[ma.length - 2] ? 'UP' : 'DOWN';
+      console.log(`MA Yönü: ${direction}`);
+    }
 
     const signal = getSignal();
     const time = new Date().toLocaleString();
@@ -212,4 +222,3 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
-
