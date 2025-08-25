@@ -168,10 +168,11 @@ function connectWS() {
     const kline = data.k;
     if (!kline || !kline.x) return;
 
-    // Yeni eklenen loglama kodu
+    // Yeni eklenen loglama kodları
     console.log(
       `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
     );
+    console.log(`Güncel veri sayısı: ${marketData.length}`);
 
     marketData.push({
       open: parseFloat(kline.o),
@@ -191,6 +192,9 @@ function connectWS() {
     }
 
     const signal = getSignal();
+    // Bu satır her veri akışında sinyal durumunu loglar
+    console.log(`Güncel sinyal durumu: ${signal}`);
+
     const time = new Date().toLocaleString();
 
     if (signal === 'buy' && lastTelegramMessage !== 'buy') {
@@ -222,5 +226,3 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
-
-
