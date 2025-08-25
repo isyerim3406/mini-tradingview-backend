@@ -3,7 +3,6 @@ import { sendTelegramMessage } from './telegram.js';
 import dotenv from 'dotenv';
 import http from 'http';
 import {
-  calculateATR,
   calculateEMA,
   calculateSMA,
   calculateRMA,
