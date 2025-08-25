@@ -157,8 +157,7 @@ const getSignal = () => {
 async function startBot() {
   console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
   try {
-    // URL'yi 'fapi' yerine 'api' olarak değiştirdik
-    const url = `https://api.binance.com/api/v3/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=200`;
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=1000`;
     const response = await axios.get(url);
     const klines = response.data;
 
@@ -223,7 +222,7 @@ function connectWS() {
       volume: parseFloat(kline.v),
     });
 
-    if (marketData.length > 200) marketData.shift();
+    if (marketData.length > 1000) marketData.shift();
 
     const ma = getIndicator(marketData, CFG.SSL1LEN);
     if (ma && ma.length > 1) {
