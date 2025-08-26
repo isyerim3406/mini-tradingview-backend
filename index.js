@@ -141,16 +141,19 @@ async function startBot() {
 
     connectWS();
 
-  } catch (error) {
+} catch (error) {
     console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
     console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
-
-    const time = getTurkishDateTime(new Date().getTime());
-    const message = `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`;
-    console.log(`✅ Telegram'a gönderiliyor: ${message}`);
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
-    connectWS();
-  }
+    
+    // Telegram'a hata mesajı gönderme satırları yorumlandı.
+    // Artık bu hata sadece konsolda görünecek.
+    // const time = getTurkishDateTime(new Date().getTime());
+    // const message = `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`;
+    // console.log(`✅ Telegram'a gönderiliyor: ${message}`);
+    // sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
+    
+    klines = []; // Klines dizisini boş olarak ayarla
+    connectWS(); // WebSocket bağlantısını başlat
 }
 
 function connectWS() {
@@ -261,3 +264,4 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
+
