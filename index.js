@@ -20,7 +20,7 @@ const CFG = {
   MA_TYPE: process.env.MA_TYPE || 'SMA',
   BASELINE_SOURCE: process.env.BASELINE_SOURCE || 'close',
   KIDIV: parseInt(process.env.KIDIV) || 1,
-  M_BARS_BUY: parseInt(process. процесс.env.M_BARS_BUY) || 1,
+  M_BARS_BUY: parseInt(process.env.M_BARS_BUY) || 1,
   N_BARS_SELL: parseInt(process.env.N_BARS_SELL) || 3,
   USE_SL_LONG: process.env.USE_SL_LONG === 'true',
   SL_LONG_PCT: parseFloat(process.env.SL_LONG_PCT) || 2.0,
@@ -241,7 +241,8 @@ function connectWS() {
         }
     }
     
-    console.log(`Güncel pozisyon durumu: ${currentPosition ? currentPosition.toUpperCase() : 'Yok'}`);
+    // Güncel pozisyon durumu satırına bar zamanını ekle
+    console.log(`Güncel pozisyon durumu: ${currentPosition ? currentPosition.toUpperCase() : 'Yok'} (son sinyal: ${getTurkishTime(kline.T)})`);
   };
 }
 
