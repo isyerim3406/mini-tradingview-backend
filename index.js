@@ -1,8 +1,10 @@
-import Binance from 'binance-api-node';
+import pkg from 'binance-api-node';
 import WebSocket from 'ws';
 import { getTurkishDateTime, sendTelegramMessage } from './utils.js';
 import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
+
+const Binance = pkg.default;
 
 dotenv.config();
 
