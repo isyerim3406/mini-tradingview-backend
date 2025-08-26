@@ -1,4 +1,5 @@
-import { ema, sma, wma, tr, rma } from 'technicalindicators';
+import pkg from 'technicalindicators';
+const { ema, sma, wma, tr, rma } = pkg;
 
 // Yardımcı fonksiyonlar
 const getAvg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -107,3 +108,4 @@ export const ssl1 = (klines, length, maType, kidiv) => {
     
     return { ssl1Line: ssl1_down, hlv: hlv };
 };
+
