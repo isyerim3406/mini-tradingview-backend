@@ -59,8 +59,6 @@ export const movingAverage = (source, length, type, k) => {
             const conversion = (getLowest(source.slice(source.length - length2).map(b => b.low)) + getHighest(source.slice(source.length - length2).map(b => b.high))) / 2;
             return (kijun + conversion) / 2;
         case 'McGinley':
-            // McGinley hesaplaması, geçmiş değerlere bağımlı olduğu için JS tarafında daha karmaşıktır.
-            // Bu nedenle bu versiyonda desteklenmemektedir. SMA'ya düşürülecektir.
             console.warn('McGinley MA, JavaScript tarafında henüz desteklenmiyor. SMA olarak hesaplanacaktır.');
             return sma({ period: length, values: source })[sma({ period: length, values: source }).length - 1];
         default: // Default SMA
@@ -108,4 +106,3 @@ export const ssl1 = (klines, length, maType, kidiv) => {
     
     return { ssl1Line: ssl1_down, hlv: hlv };
 };
-
