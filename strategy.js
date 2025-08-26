@@ -15,8 +15,8 @@ export function computeSignals(klines, cfg) {
   const baselineSource = klines.map(k => k[baselineSourceKey]);
 
   const bbmc = moving(cfg.MA_TYPE, baselineSource, cfg.SSL1LEN, {
-    high,
-    low,
+    high: high,
+    low: low,
     kidiv: cfg.KIDIV,
   });
   if (!bbmc || bbmc.length === 0) return null;
