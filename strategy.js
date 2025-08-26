@@ -1,4 +1,4 @@
-import { moving, ssl1Line, atr, calculateRMA, calculateSMA, calculateEMA, calculateWMA, calculateDEMA, calculateTEMA, calculateTMA, calculateHMA, calculateLSMA } from './indicators.js';
+import { moving, ssl1Line, atr } from './indicators.js';
 
 export function computeSignals(klines, cfg) {
   const close = klines.map(k => k.close);
@@ -8,28 +8,35 @@ export function computeSignals(klines, cfg) {
   const open = klines.map(k => k.open);
 
   const atrCalc = atr(klines, cfg.ATR_LEN, cfg.ATR_SMOOTHING);
-  if (!atrCalc || atrCalc.length === 0) return null;
   const atrLast = atrCalc[atrCalc.length - 1];
 
+  // Pine Script'ten gelen 'Baseline Source'u burada kullanıyoruz.
+  // Varsayılan olarak 'close'u kullanır. Eğer .env'de farklı bir değer varsa onu alır.
   const baselineSourceKey = cfg.BASELINE_SOURCE ? cfg.BASELINE_SOURCE.toLowerCase() : 'close';
   const baselineSource = klines.map(k => k[baselineSourceKey]);
 
-  const bbmc = moving(cfg.MA_TYPE, baselineSource, cfg.SSL1LEN, {
+  // Baseline (BBMC) - Artık dinamik olarak seçilen kaynağı kullanacak.
+  const bbmc = moving(cfg.MA_TYPE, baselineSource, cfg.LEN, {
     high,
     low,
     kidiv: cfg.KIDIV,
   });
-  if (!bbmc || bbmc.length === 0) return null;
   const bbmcLast = bbmc[bbmc.length - 1];
 
+  // Bands - Diğer kısımlar aynı kalacak
   const upperAtr = bbmcLast + atrLast * cfg.ATR_MULT;
   const lowerAtr = bbmcLast - atrLast * cfg.ATR_MULT;
 
-  const ssl = ssl1Line(klines, cfg.SSL1LEN, cfg.MA_TYPE);
-  if (!ssl || ssl.length < 2) return null;
+  // SSL1
+  const ssl = ssl1Line(high, low, close, cfg.SSL1LEN, cfg.MA_TYPE, {
+    high,
+    low,
+    kidiv: cfg.KIDIV,
+  });
   const ssl1Last = ssl[ssl.length - 1];
   const ssl1Prev = ssl[ssl.length - 2];
-  
+
+  // Sinyaller
   let buySignal = false;
   let sellSignal = false;
 
@@ -41,11 +48,8 @@ export function computeSignals(klines, cfg) {
     sellSignal = consecutiveClosesBelow && cfg.N_BARS_SELL > 0;
 
   } else if (cfg.ENTRY_SIGNAL_TYPE === 'SSL1_CROSSOVER') {
-    const lastClose = close[close.length - 1];
-    const prevClose = close[close.length - 2];
-    
-    buySignal = lastClose > ssl1Last && prevClose <= ssl1Prev;
-    sellSignal = lastClose < ssl1Last && prevClose >= ssl1Prev;
+    buySignal = close[close.length - 1] > ssl1Last && close[close.length - 2] < ssl1Prev;
+    sellSignal = close[close.length - 1] < ssl1Last && close[close.length - 2] > ssl1Prev;
   }
 
   const signals = {
