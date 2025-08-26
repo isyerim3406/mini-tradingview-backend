@@ -1,5 +1,5 @@
 import pkg from 'technicalindicators';
-const { sma, ema, wma, tr, rma } = pkg;
+const { sma, ema, wma, rma } = pkg;
 
 // Yardımcı fonksiyonlar
 const getAvg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -66,16 +66,28 @@ export const movingAverage = (source, length, type, k) => {
     }
 };
 
-// ATR Hesaplaması (Pine Script'teki 'atr' fonksiyonuna karşılık gelir)
+// True Range Hesaplaması
+const calculateTR = (klines) => {
+    const trArray = [];
+    for (let i = 0; i < klines.length; i++) {
+        if (i === 0) {
+            trArray.push(klines[i].high - klines[i].low);
+        } else {
+            const hl = klines[i].high - klines[i].low;
+            const hpc = Math.abs(klines[i].high - klines[i-1].close);
+            const lpc = Math.abs(klines[i].low - klines[i-1].close);
+            trArray.push(Math.max(hl, hpc, lpc));
+        }
+    }
+    return trArray;
+};
+
+
+// ATR Hesaplaması
 export const atr = (klines, length, smoothing) => {
-    const high = klines.map(k => k.high);
-    const low = klines.map(k => k.low);
-    const close = klines.map(k => k.close);
+    const trueRange = calculateTR(klines);
+    if (trueRange.length < length) return NaN;
     
-    if (high.length < length) return NaN;
-
-    const trueRange = tr({ high, low, close });
-
     switch (smoothing) {
         case 'RMA':
             return rma({ period: length, values: trueRange })[trueRange.length - 1];
@@ -106,7 +118,6 @@ export const ssl1 = (klines, length, maType, kidiv) => {
     
     return { ssl1Line: ssl1_down, hlv: hlv };
 };
-
 export const crossover = (series1, series2) => {
     if (series1.length < 2 || series2.length < 2) return false;
     const current1 = series1[series1.length - 1];
