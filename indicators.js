@@ -17,7 +17,16 @@ const {
   MovingAverage,
 } = pkg;
 
-// Hatalı RMA hesaplaması düzeltildi
+export const calculateSMA = (source, len) => {
+  if (source.length < len) return null;
+  return SMA.calculate({ period: len, values: source });
+};
+
+export const calculateEMA = (source, len) => {
+  if (source.length < len) return null;
+  return EMA.calculate({ period: len, values: source });
+};
+
 export const calculateRMA = (source, len) => {
     if (source.length < len) return null;
     let rma = [EMA.calculate({ period: len, values: source.slice(0, len) })[0]];
@@ -29,7 +38,36 @@ export const calculateRMA = (source, len) => {
     return rma;
 };
 
-// KiJun v2 hesaplaması TradingView mantığına uyarlandı
+export const calculateWMA = (source, len) => {
+  if (source.length < len) return null;
+  return WMA.calculate({ period: len, values: source });
+};
+
+export const calculateDEMA = (source, len) => {
+  if (source.length < len) return null;
+  return DEMA.calculate({ period: len, values: source });
+};
+
+export const calculateTEMA = (source, len) => {
+  if (source.length < len) return null;
+  return TEMA.calculate({ period: len, values: source });
+};
+
+export const calculateTMA = (source, len) => {
+  if (source.length < len) return null;
+  return TMA.calculate({ period: len, values: source });
+};
+
+export const calculateHMA = (source, len) => {
+  if (source.length < len) return null;
+  return HMA.calculate({ period: len, values: source });
+};
+
+export const calculateLSMA = (source, len) => {
+  if (source.length < len) return null;
+  return LSMA.calculate({ period: len, values: source });
+};
+
 export const calculateKiJun = (klines, len, kidiv) => {
     if (klines.length < len) return null;
     const len1 = len;
@@ -97,7 +135,7 @@ export const moving = (type, source, len, { high, low, kidiv }) => {
             ma = HMA.calculate({ period: len, values: source });
             break;
         case 'kijun v2':
-            ma = calculateKiJun({ high, low }, len, kidiv);
+            ma = calculateKiJun(source, len, kidiv);
             break;
         default:
             ma = null;
@@ -169,79 +207,4 @@ export function atr(klines, period, smoothing) {
     }
 
     return atrs;
-}import pkg from 'technicalindicators';
-
-const {
-  SMA,
-  EMA,
-  WMA,
-  DEMA,
-  TEMA,
-  TMA,
-  HMA,
-  LSMA,
-  ATR,
-  RSI,
-  MACD,
-  BollingerBands,
-  Stochastic,
-  MovingAverage,
-} = pkg;
-
-export const calculateSMA = (source, len) => {
-  if (source.length < len) return null;
-  return SMA.calculate({ period: len, values: source });
-};
-
-export const calculateEMA = (source, len) => {
-  if (source.length < len) return null;
-  return EMA.calculate({ period: len, values: source });
-};
-
-export const calculateRMA = (source, len) => {
-  if (source.length < len) return null;
-  return EMA.calculate({ period: len, values: source });
-};
-
-export const calculateWMA = (source, len) => {
-  if (source.length < len) return null;
-  return WMA.calculate({ period: len, values: source });
-};
-
-export const calculateDEMA = (source, len) => {
-  if (source.length < len) return null;
-  return DEMA.calculate({ period: len, values: source });
-};
-
-export const calculateTEMA = (source, len) => {
-  if (source.length < len) return null;
-  return TEMA.calculate({ period: len, values: source });
-};
-
-export const calculateTMA = (source, len) => {
-  if (source.length < len) return null;
-  return TMA.calculate({ period: len, values: source });
-};
-
-export const calculateHMA = (source, len) => {
-  if (source.length < len) return null;
-  return HMA.calculate({ period: len, values: source });
-};
-
-export const calculateLSMA = (source, len) => {
-  if (source.length < len) return null;
-  return LSMA.calculate({ period: len, values: source });
-};
-
-export const calculateKiJun = (source, len) => {
-  // TradingView stratejinizdeki Kijun-sen mantığı
-  if (source.length < len) return null;
-  let high = 0;
-  let low = Infinity;
-  for (let i = source.length - len; i < source.length; i++) {
-    if (source[i].high > high) high = source[i].high;
-    if (source[i].low < low) low = source[i].low;
-  }
-  return (high + low) / 2;
-};
-
+}
