@@ -105,7 +105,7 @@ export const calculateKiJun = (klines, len, kidiv) => {
     return result;
 };
 
-export const moving = (type, source, len, { high, low, kidiv }) => {
+export const moving = (type, source, len, { high = [], low = [], kidiv = 1 } = {}) => {
     if (source.length < len) return null;
     let ma;
 
@@ -148,8 +148,8 @@ export const ssl1Line = (klines, len, maType) => {
     const high = klines.map(k => k.high);
     const low = klines.map(k => k.low);
 
-    const ssl1_emaHigh = moving(maType, high, len);
-    const ssl1_emaLow = moving(maType, low, len);
+    const ssl1_emaHigh = moving(maType, high, len, {});
+    const ssl1_emaLow = moving(maType, low, len, {});
 
     let ssl1_down = [];
     let hlv1 = 0;
