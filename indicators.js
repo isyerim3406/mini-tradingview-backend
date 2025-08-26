@@ -1,72 +1,114 @@
 import pkg from 'technicalindicators';
-const { ema, sma, wma, tr, rma } = pkg;
+const { sma, ema, wma, tr, rma } = pkg;
 
-// Yardımcı fonksiyonlar
-const getAvg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
-const getLowest = (arr) => Math.min(...arr);
-const getHighest = (arr) => Math.max(...arr);
+// Hareketli Ortalama Hesaplaması
+export const movingAverage = (data, period, type, options = {}) => {
+    const { kidiv = 1 } = options;
+    if (!data || data.length < period) return NaN;
 
-// Hareketli Ortalama Fonksiyonu (Pine Script'teki 'ma' fonksiyonuna karşılık gelir)
-export const movingAverage = (source, length, type, k) => {
-    if (source.length < length) return NaN;
+    const values = data.map(d => typeof d === 'object' ? d.close : d);
+    if (values.length < period) return NaN;
 
-    switch (type) {
+    let result;
+    switch(type) {
         case 'SMA':
-            return sma({ period: length, values: source })[sma({ period: length, values: source }).length - 1];
+            result = sma({ period, values });
+            break;
         case 'EMA':
-            return ema({ period: length, values: source })[ema({ period: length, values: source }).length - 1];
+            result = ema({ period, values });
+            break;
         case 'WMA':
-            return wma({ period: length, values: source })[wma({ period: length, values: source }).length - 1];
+            result = wma({ period, values });
+            break;
         case 'DEMA':
-            const ema1 = ema({ period: length, values: source });
-            if (ema1.length < length) return NaN;
-            const ema2 = ema({ period: length, values: ema1 });
-            if (ema2.length < 1) return NaN;
-            return 2 * ema1[ema1.length - 1] - ema2[ema2.length - 1];
+            const ema1 = ema({ period, values });
+            if (ema1.length < period) return NaN;
+            const ema2 = ema({ period, values: ema1 });
+            if (ema2.length === 0) return NaN;
+            result = ema1.map((val, i) => val && ema2[i] ? 2 * val - ema2[i] : NaN);
+            break;
         case 'TEMA':
-            const ema_tema1 = ema({ period: length, values: source });
-            if (ema_tema1.length < length) return NaN;
-            const ema_tema2 = ema({ period: length, values: ema_tema1 });
-            if (ema_tema2.length < 1) return NaN;
-            const ema_tema3 = ema({ period: length, values: ema_tema2 });
-            if (ema_tema3.length < 1) return NaN;
-            return 3 * (ema_tema1[ema_tema1.length - 1] - ema_tema2[ema_tema2.length - 1]) + ema_tema3[ema_tema3.length - 1];
+            const ema1_t = ema({ period, values });
+            if (ema1_t.length < period) return NaN;
+            const ema2_t = ema({ period, values: ema1_t });
+            if (ema2_t.length < period) return NaN;
+            const ema3_t = ema({ period, values: ema2_t });
+            if (ema3_t.length === 0) return NaN;
+            result = ema1_t.map((val, i) => val && ema2_t[i] && ema3_t[i] ? 3 * (val - ema2_t[i]) + ema3_t[i] : NaN);
+            break;
         case 'TMA':
-            const sma1 = sma({ period: Math.ceil(length / 2), values: source });
-            if (sma1.length < length) return NaN;
-            const sma2 = sma({ period: Math.floor(length / 2) + 1, values: sma1 });
-            if (sma2.length < 1) return NaN;
-            return sma2[sma2.length - 1];
+            const sma1 = sma({ period: Math.ceil(period / 2), values });
+            if (sma1.length === 0) return NaN;
+            result = sma({ period: Math.floor(period / 2) + 1, values: sma1 });
+            break;
         case 'HMA':
-            const hma_wma1 = wma({ period: Math.round(length / 2), values: source });
-            const hma_wma2 = wma({ period: length, values: source });
-            if (hma_wma1.length < 1 || hma_wma2.length < 1) return NaN;
-            const hma_diff = hma_wma1.map((val, i) => 2 * val - hma_wma2[i]);
-            return wma({ period: Math.round(Math.sqrt(length)), values: hma_diff })[hma_diff.length - 1];
+            const wma1_h = wma({ period: Math.round(period / 2), values });
+            const wma2_h = wma({ period, values });
+            if (wma1_h.length === 0 || wma2_h.length === 0) return NaN;
+            const diff = wma1_h.map((val, i) => 2 * (val || 0) - (wma2_h[i] || 0));
+            result = wma({ period: Math.round(Math.sqrt(period)), values: diff });
+            break;
         case 'LSMA':
-            const values = source.slice(source.length - length);
-            if (values.length < length) return NaN;
-            const sumX = (length * (length - 1)) / 2;
-            const sumY = getAvg(values);
-            const sumXY = values.reduce((sum, y, i) => sum + (i * y), 0);
-            const sumX2 = (length * (length - 1) * (2 * length - 1)) / 6;
-            const m = (length * sumXY - sumX * sumY * length) / (length * sumX2 - sumX * sumX);
-            return values[values.length - 1] + m;
+            const lsmaValues = values.slice(-period);
+            const n = lsmaValues.length;
+            const sumX = (n * (n - 1)) / 2;
+            const sumY = lsmaValues.reduce((a, b) => a + b, 0);
+            const sumXY = lsmaValues.reduce((sum, y, x) => sum + x * y, 0);
+            const sumX2 = lsmaValues.reduce((sum, _, x) => sum + x * x, 0);
+            const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+            const intercept = (sumY - slope * sumX) / n;
+            result = [intercept + slope * (n - 1)]; // Sadece son değeri döndür
+            break;
         case 'Kijun v2':
-            const length1 = length;
-            const length2 = Math.max(1, Math.floor(length / k));
-            const kijun = (getLowest(source.slice(source.length - length1).map(b => b.low)) + getHighest(source.slice(source.length - length1).map(b => b.high))) / 2;
-            const conversion = (getLowest(source.slice(source.length - length2).map(b => b.low)) + getHighest(source.slice(source.length - length2).map(b => b.high))) / 2;
-            return (kijun + conversion) / 2;
+            const kijunLength = period;
+            const convLength = Math.max(1, Math.floor(period / kidiv));
+            const highest = Math.max(...values.slice(-kijunLength));
+            const lowest = Math.min(...values.slice(-kijunLength));
+            const kijun = (highest + lowest) / 2;
+            
+            const convHighest = Math.max(...values.slice(-convLength));
+            const convLowest = Math.min(...values.slice(-convLength));
+            const conversionLine = (convHighest + convLowest) / 2;
+            result = [(kijun + conversionLine) / 2]; // Sadece son değeri döndür
+            break;
         case 'McGinley':
-            console.warn('McGinley MA, JavaScript tarafında henüz desteklenmiyor. SMA olarak hesaplanacaktır.');
-            return sma({ period: length, values: source })[sma({ period: length, values: source }).length - 1];
-        default: // Default SMA
-            return sma({ period: length, values: source })[sma({ period: length, values: source }).length - 1];
+            // McGinley için özel hesaplama
+            const mcginleyResult = [];
+            let prev = sma({ period, values })[period - 1];
+            mcginleyResult.push(prev);
+
+            for(let i = period; i < values.length; i++) {
+                const factor = period * Math.pow(values[i] / prev, 4);
+                prev = prev + (values[i] - prev) / factor;
+                mcginleyResult.push(prev);
+            }
+            result = mcginleyResult;
+            break;
+        default:
+            result = sma({ period, values });
+            break;
     }
+    
+    return result[result.length - 1];
 };
 
-// ATR Hesaplaması (Pine Script'teki 'atr' fonksiyonuna karşılık gelir)
+// True Range Hesaplaması
+const calculateTR = (high, low, close) => {
+    const trArray = [];
+    for (let i = 0; i < high.length; i++) {
+        if (i === 0) {
+            trArray.push(high[i] - low[i]);
+        } else {
+            const hl = high[i] - low[i];
+            const hc = Math.abs(high[i] - close[i - 1]);
+            const lc = Math.abs(low[i] - close[i - 1]);
+            trArray.push(Math.max(hl, hc, lc));
+        }
+    }
+    return trArray;
+};
+
+// ATR Hesaplaması
 export const atr = (klines, length, smoothing) => {
     const high = klines.map(k => k.high);
     const low = klines.map(k => k.low);
@@ -74,35 +116,62 @@ export const atr = (klines, length, smoothing) => {
     
     if (high.length < length) return NaN;
 
-    const trueRange = tr({ high, low, close });
+    const trueRange = calculateTR(high, low, close);
 
+    let atrResult;
     switch (smoothing) {
         case 'RMA':
-            return rma({ period: length, values: trueRange })[trueRange.length - 1];
+            atrResult = rma({ period: length, values: trueRange });
+            break;
         case 'SMA':
-            return sma({ period: length, values: trueRange })[trueRange.length - 1];
+            atrResult = sma({ period: length, values: trueRange });
+            break;
         case 'EMA':
-            return ema({ period: length, values: trueRange })[trueRange.length - 1];
+            atrResult = ema({ period: length, values: trueRange });
+            break;
         case 'WMA':
-            return wma({ period: length, values: trueRange })[trueRange.length - 1];
         default:
-            return sma({ period: length, values: trueRange })[trueRange.length - 1];
+            atrResult = wma({ period: length, values: trueRange });
+            break;
     }
+
+    if (!atrResult || atrResult.length === 0) return NaN;
+    return atrResult[atrResult.length - 1];
 };
 
-// SSL1 Çizgisi Hesaplaması
+// SSL1 Hesaplaması
 export const ssl1 = (klines, length, maType, kidiv) => {
     const high = klines.map(k => k.high);
     const low = klines.map(k => k.low);
     const close = klines.map(k => k.close);
 
-    const ssl1_emaHigh = movingAverage(high, length, maType, kidiv);
-    const ssl1_emaLow = movingAverage(low, length, maType, kidiv);
+    const ssl1_emaHigh = movingAverage(high, length, maType, { kidiv });
+    const ssl1_emaLow = movingAverage(low, length, maType, { kidiv });
 
     if (isNaN(ssl1_emaHigh) || isNaN(ssl1_emaLow)) return { ssl1Line: NaN, hlv: 0 };
     
-    const hlv = close[close.length - 1] > ssl1_emaHigh ? 1 : close[close.length - 1] < ssl1_emaLow ? -1 : 0;
+    const lastClose = close[close.length - 1];
+    const hlv = lastClose > ssl1_emaHigh ? 1 : lastClose < ssl1_emaLow ? -1 : 0;
     const ssl1_down = hlv < 0 ? ssl1_emaHigh : ssl1_emaLow;
     
-    return { ssl1Line: ssl1_down, hlv: hlv };
+    return { ssl1Line: ssl1_down, hlv };
+};
+
+// Kesişim Kontrolü
+export const crossover = (series1, series2) => {
+    if (series1.length < 2 || series2.length < 2) return false;
+    const current1 = series1[series1.length - 1];
+    const current2 = series2[series2.length - 1];
+    const prev1 = series1[series1.length - 2];
+    const prev2 = series2[series2.length - 2];
+    return prev1 <= prev2 && current1 > current2;
+};
+
+export const crossunder = (series1, series2) => {
+    if (series1.length < 2 || series2.length < 2) return false;
+    const current1 = series1[series1.length - 1];
+    const current2 = series2[series2.length - 1];
+    const prev1 = series1[series1.length - 2];
+    const prev2 = series2[series2.length - 2];
+    return prev1 >= prev2 && current1 < current2;
 };
