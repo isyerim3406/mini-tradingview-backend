@@ -3,18 +3,7 @@ import { sendTelegramMessage } from './telegram.js';
 import dotenv from 'dotenv';
 import http from 'http';
 import axios from 'axios';
-import {
-  calculateEMA,
-  calculateSMA,
-  calculateRMA,
-  calculateWMA,
-  calculateDEMA,
-  calculateTEMA,
-  calculateTMA,
-  calculateHMA,
-  calculateLSMA,
-  calculateKiJun,
-} from './indicators.js';
+import { computeSignals } from './strateji.js'; // Yeni strateji dosyasından fonksiyonu import ettik.
 
 dotenv.config();
 
@@ -40,115 +29,10 @@ let lastTelegramMessage = '';
 let ws;
 let reconnectTimeout = null;
 
-const getIndicator = (source, len) => {
-  switch (CFG.MA_TYPE) {
-    case 'SMA': return calculateSMA(source, len);
-    case 'EMA': return calculateEMA(source, len);
-    case 'DEMA': return calculateDEMA(source, len);
-    case 'TEMA': return calculateTEMA(source, len);
-    case 'LSMA': return calculateLSMA(source, len);
-    case 'WMA': return calculateWMA(source, len);
-    case 'TMA': return calculateTMA(source, len);
-    case 'HMA': return calculateHMA(source, len);
-    case 'KIJUN2': return calculateKiJun(source, len, CFG.KIDIV);
-    default: return null;
-  }
-};
-
-function getAtr(source, len) {
-  let trs = [];
-  let atrs = [];
-  for (let i = 1; i < source.length; i++) {
-    let tr = Math.max(
-      source[i].high - source[i].low,
-      Math.abs(source[i].high - source[i - 1].close),
-      Math.abs(source[i].low - source[i - 1].close)
-    );
-    trs.push(tr);
-  }
-  if (CFG.ATR_SMOOTHING === 'RMA') {
-    atrs = calculateRMA(trs, len);
-  } else if (CFG.ATR_SMOOTHING === 'EMA') {
-    atrs = calculateEMA(trs, len);
-  } else if (CFG.ATR_SMOOTHING === 'WMA') {
-    atrs = calculateWMA(trs, len);
-  } else {
-    atrs = calculateSMA(trs, len);
-  }
-  return atrs;
-}
-
-const getBbmcATR = () => {
-  const ma = getIndicator(marketData, CFG.SSL1LEN);
-  if (!ma) return;
-
-  const atr = getAtr(marketData, CFG.ATR_LEN);
-  if (!atr) return;
-
-  const up = [];
-  const down = [];
-  for (let i = 0; i < ma.length; i++) {
-    up.push(ma[i] + atr[i] * CFG.ATR_MULT);
-    down.push(ma[i] - atr[i] * CFG.ATR_MULT);
-  }
-
-  // Yeni mum verisi ile sinyal üretme mantığı
-  const lastClose = marketData[marketData.length - 1].close;
-  const lastUpBand = up[up.length - 1];
-  const lastDownBand = down[down.length - 1];
-
-  let buySignal = false;
-  let sellSignal = false;
-
-  // Alım sinyali: Kapanış fiyatı üst bandın üzerindeyse
-  if (lastClose > lastUpBand) {
-    buySignal = true;
-  }
-
-  // Satış sinyali: Kapanış fiyatı alt bandın altındaysa
-  if (lastClose < lastDownBand) {
-    sellSignal = true;
-  }
-
-  if (buySignal) return 'buy';
-  if (sellSignal) return 'sell';
-  return null;
-};
-
-const getSsl = (source, len) => {
-  const ma = getIndicator(source, len);
-  if (!ma) return;
-  const hlv = [];
-  for (let i = 0; i < ma.length; i++) {
-    if (i === 0) {
-      hlv.push(1);
-    } else {
-      hlv.push(ma[i] > ma[i - 1] ? 1 : -1);
-    }
-  }
-  return hlv;
-};
-
-const getSslSignal = () => {
-  const hlv = getSsl(marketData, CFG.SSL1LEN);
-  if (!hlv) return;
-  const isBuySignal = hlv[hlv.length - 1] === 1 && hlv[hlv.length - 2] === -1;
-  const isSellSignal = hlv[hlv.length - 1] === -1 && hlv[hlv.length - 2] === 1;
-  if (isBuySignal) return 'buy';
-  if (isSellSignal) return 'sell';
-  return null;
-};
-
-const getSignal = () => {
-  if (CFG.ENTRY_SIGNAL_TYPE === 'BBMC_ATR') return getBbmcATR();
-  if (CFG.ENTRY_SIGNAL_TYPE === 'SSL1') return getSslSignal();
-  return null;
-};
-
 async function startBot() {
   console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
   try {
-    const url = `https://api.binance.com/api/v3/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=1000`;
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=1000`;
     const response = await axios.get(url);
     const klines = response.data;
 
@@ -215,28 +99,25 @@ function connectWS() {
 
     if (marketData.length > 1000) marketData.shift();
 
-    const ma = getIndicator(marketData, CFG.SSL1LEN);
-    if (ma && ma.length > 1) {
-      const direction = ma[ma.length - 1] > ma[ma.length - 2] ? 'UP' : 'DOWN';
-      console.log(`MA Yönü: ${direction}`);
+    const signals = computeSignals(marketData, CFG); // Yeni fonksiyonu çağırdık.
+
+    if (signals) {
+      if (signals.buy && lastTelegramMessage !== 'buy') {
+        const time = new Date().toLocaleString();
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - BUY signal for ${CFG.SYMBOL}!`);
+        lastTelegramMessage = 'buy';
+        console.log('✅ BUY signal sent!');
+      } else if (signals.sell && lastTelegramMessage !== 'sell') {
+        const time = new Date().toLocaleString();
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
+        lastTelegramMessage = 'sell';
+        console.log('✅ SELL signal sent!');
+      } else if (!signals.buy && !signals.sell) {
+        lastTelegramMessage = null;
+      }
     }
 
-    const signal = getSignal();
-    console.log(`Güncel sinyal durumu: ${signal}`);
-
-    const time = new Date().toLocaleString();
-
-    if (signal === 'buy' && lastTelegramMessage !== 'buy') {
-      sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - BUY signal for ${CFG.SYMBOL}!`);
-      lastTelegramMessage = 'buy';
-      console.log('BUY signal sent!');
-    } else if (signal === 'sell' && lastTelegramMessage !== 'sell') {
-      sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
-      lastTelegramMessage = 'sell';
-      console.log('SELL signal sent!');
-    } else if (signal === null) {
-      lastTelegramMessage = null;
-    }
+    console.log(`Güncel sinyal durumu: ${signals ? (signals.buy ? 'buy' : signals.sell ? 'sell' : 'null') : 'null'}`);
   };
 }
 
