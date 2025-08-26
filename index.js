@@ -22,7 +22,6 @@ const CFG = {
   KIDIV: parseInt(process.env.KIDIV) || 1,
   M_BARS_BUY: parseInt(process.env.M_BARS_BUY) || 1,
   N_BARS_SELL: parseInt(process.env.N_BARS_SELL) || 3,
-  // Yeni eklenen Stop Loss parametreleri
   USE_SL_LONG: process.env.USE_SL_LONG === 'true',
   SL_LONG_PCT: parseFloat(process.env.SL_LONG_PCT) || 2.0,
   SL_LONG_ACT_BARS: parseInt(process.env.SL_LONG_ACT_BARS) || 1,
@@ -36,12 +35,10 @@ let lastTelegramMessage = '';
 let ws;
 let reconnectTimeout = null;
 
-// Pozisyon yönetimi için yeni değişkenler
-let currentPosition = null; // 'long', 'short', or null
+let currentPosition = null; 
 let entryPrice = null;
 let entryBarIndex = null;
 
-// Stop-loss kontrolü ve pozisyon çevirme (flip) mantığı
 function checkStopLossAndFlip(klines) {
   if (!currentPosition) return;
   
@@ -54,11 +51,10 @@ function checkStopLossAndFlip(klines) {
     if (barsSinceEntry >= CFG.SL_LONG_ACT_BARS) {
       const slLongLevel = entryPrice * (1 - CFG.SL_LONG_PCT / 100.0);
       if (lastClose <= slLongLevel) {
-        // Stop-loss vuruldu, pozisyonu çevir (flip)
         const time = new Date().toLocaleString();
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - LONG POZISYON STOP LOSS VURDU. POZISYON SAT'A ÇEVRİLDİ. (Flip).`);
         currentPosition = 'short';
-        entryPrice = lastClose; // Yeni giriş fiyatı
+        entryPrice = lastClose;
         entryBarIndex = currentBarIndex;
         lastTelegramMessage = 'short';
         console.log('❌ Long pozisyon stop loss vurdu ve flip yapıldı.');
@@ -68,11 +64,10 @@ function checkStopLossAndFlip(klines) {
     if (barsSinceEntry >= CFG.SL_SHORT_ACT_BARS) {
       const slShortLevel = entryPrice * (1 + CFG.SL_SHORT_PCT / 100.0);
       if (lastClose >= slShortLevel) {
-        // Stop-loss vuruldu, pozisyonu çevir (flip)
         const time = new Date().toLocaleString();
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SHORT POZISYON STOP LOSS VURDU. POZISYON AL'A ÇEVRİLDİ. (Flip).`);
         currentPosition = 'long';
-        entryPrice = lastClose; // Yeni giriş fiyatı
+        entryPrice = lastClose;
         entryBarIndex = currentBarIndex;
         lastTelegramMessage = 'long';
         console.log('❌ Short pozisyon stop loss vurdu ve flip yapıldı.');
@@ -153,10 +148,8 @@ function connectWS() {
 
     const signals = computeSignals(marketData, CFG);
 
-    // Stop-loss ve flip kontrolü
     checkStopLossAndFlip(marketData);
 
-    // Giriş sinyali kontrolü (eğer halihazırda bir pozisyon yoksa)
     if (!currentPosition) {
         if (signals && signals.buy) {
             const time = new Date().toLocaleString();
