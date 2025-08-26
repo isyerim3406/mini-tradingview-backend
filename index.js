@@ -154,6 +154,9 @@ function connectWS() {
     const kline = data.k;
     if (!kline || !kline.x) return;
 
+    // Mumun kapanış zamanını alıp yerel saate dönüştürme
+    const closeTime = new Date(kline.T).toLocaleTimeString('tr-TR');
+
     console.log(
       `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
     );
@@ -173,17 +176,17 @@ function connectWS() {
 
     checkStopLossAndFlip(marketData);
 
-    // Her mum kapandığında durumu konsola yaz
+    // Her mum kapandığında durumu konsola yaz ve zamanını ekle
     if (signals) {
       if (signals.buy) {
-        console.log('🟢 Güncel durum: AL sinyali mevcut.');
+        console.log(`🟢 [${closeTime}] Güncel durum: AL sinyali mevcut.`);
       } else if (signals.sell) {
-        console.log('🔴 Güncel durum: SAT sinyali mevcut.');
+        console.log(`🔴 [${closeTime}] Güncel durum: SAT sinyali mevcut.`);
       } else {
-        console.log('⚪ Güncel durum: Sinyal yok.');
+        console.log(`⚪ [${closeTime}] Güncel durum: Sinyal yok.`);
       }
     } else {
-      console.log('⚠️ Sinyal hesaplanamıyor.');
+      console.log(`⚠️ [${closeTime}] Sinyal hesaplanamıyor.`);
     }
 
 
