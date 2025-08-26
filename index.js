@@ -92,30 +92,21 @@ const getBbmcATR = () => {
     down.push(ma[i] - atr[i] * CFG.ATR_MULT);
   }
 
+  // Yeni mum verisi ile sinyal üretme mantığı
+  const lastClose = marketData[marketData.length - 1].close;
+  const lastUpBand = up[up.length - 1];
+  const lastDownBand = down[down.length - 1];
+
   let buySignal = false;
   let sellSignal = false;
 
-  let consecutiveBuys = 0;
-  for (let i = marketData.length - 1; i >= 0 && i > marketData.length - 1 - CFG.M_BARS_BUY; i--) {
-    if (marketData[i].close > up[i]) {
-      consecutiveBuys++;
-    } else {
-      break;
-    }
-  }
-  if (consecutiveBuys >= CFG.M_BARS_BUY) {
+  // Alım sinyali: Kapanış fiyatı üst bandın üzerindeyse
+  if (lastClose > lastUpBand) {
     buySignal = true;
   }
 
-  let consecutiveSells = 0;
-  for (let i = marketData.length - 1; i >= 0 && i > marketData.length - 1 - CFG.N_BARS_SELL; i--) {
-    if (marketData[i].close < down[i]) {
-      consecutiveSells++;
-    } else {
-      break;
-    }
-  }
-  if (consecutiveSells >= CFG.N_BARS_SELL) {
+  // Satış sinyali: Kapanış fiyatı alt bandın altındaysa
+  if (lastClose < lastDownBand) {
     sellSignal = true;
   }
 
@@ -157,7 +148,7 @@ const getSignal = () => {
 async function startBot() {
   console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
   try {
-    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=1000`;
+    const url = `https://api.binance.com/api/v3/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=1000`;
     const response = await axios.get(url);
     const klines = response.data;
 
