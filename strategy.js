@@ -30,12 +30,10 @@ export function computeSignals(klines, cfg) {
   const ssl1Last = ssl[ssl.length - 1];
   const ssl1Prev = ssl[ssl.length - 2];
   
-  // Sinyaller
   let buySignal = false;
   let sellSignal = false;
 
   if (cfg.ENTRY_SIGNAL_TYPE === 'BBMC_ATR') {
-    // BBMC+ATR sinyal mantığı düzeltildi
     const consecutiveClosesAbove = close.slice(-cfg.M_BARS_BUY).every(c => c > upperAtr);
     const consecutiveClosesBelow = close.slice(-cfg.N_BARS_SELL).every(c => c < lowerAtr);
 
@@ -43,7 +41,6 @@ export function computeSignals(klines, cfg) {
     sellSignal = consecutiveClosesBelow && cfg.N_BARS_SELL > 0;
 
   } else if (cfg.ENTRY_SIGNAL_TYPE === 'SSL1_CROSSOVER') {
-    // SSL1 kesişim sinyal mantığı doğru
     const lastClose = close[close.length - 1];
     const prevClose = close[close.length - 2];
     
