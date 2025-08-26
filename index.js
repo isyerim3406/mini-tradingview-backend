@@ -3,7 +3,7 @@ import { sendTelegramMessage } from './telegram.js';
 import dotenv from 'dotenv';
 import http from 'http';
 import axios from 'axios';
-import { computeSignals } from './strateji.js';
+import { computeSignals } from './strategy.js';
 
 dotenv.config();
 
@@ -190,3 +190,4 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
+
