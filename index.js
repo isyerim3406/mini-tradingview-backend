@@ -40,6 +40,27 @@ let entryPrice = null;
 let entryBarIndex = null;
 let isFirstRun = true;
 
+function findLastHistoricalSignal(klines) {
+  let lastSignal = null;
+  let lastSignalTime = null;
+
+  for (let i = 1; i < klines.length; i++) {
+    const subset = klines.slice(0, i + 1);
+    const signals = computeSignals(subset, CFG);
+
+    if (signals && signals.buy) {
+      lastSignal = 'BUY';
+      lastSignalTime = new Date(klines[i].closeTime).toLocaleString();
+    } else if (signals && signals.sell) {
+      lastSignal = 'SELL';
+      lastSignalTime = new Date(klines[i].closeTime).toLocaleString();
+    }
+  }
+
+  return { signal: lastSignal, time: lastSignalTime };
+}
+
+
 function checkStopLossAndFlip(klines) {
   if (!currentPosition) return;
 
@@ -83,36 +104,30 @@ async function startBot() {
     const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL}&interval=${CFG.INTERVAL}&limit=1000`;
     const response = await axios.get(url);
     const klines = response.data;
-
-    klines.forEach(kline => {
-      marketData.push({
+    const transformedKlines = klines.map(kline => ({
+        openTime: kline[0],
         open: parseFloat(kline[1]),
         high: parseFloat(kline[2]),
         low: parseFloat(kline[3]),
         close: parseFloat(kline[4]),
         volume: parseFloat(kline[5]),
-      });
-    });
+        closeTime: kline[6],
+    }));
+
+    marketData.push(...transformedKlines);
 
     console.log(`✅ ${marketData.length} adet geçmiş mum verisi başarıyla yüklendi.`);
-
-    const signals = computeSignals(marketData, CFG);
-    const time = new Date().toLocaleString();
-    let statusMessage = `${time} - Bot başlatıldı. Güncel durum: `;
-
-    if (signals) {
-      if (signals.buy) {
-        statusMessage += `Alış sinyali mevcut.`;
-      } else if (signals.sell) {
-        statusMessage += `Satış sinyali mevcut.`;
-      } else {
-        statusMessage += `Sinyal yok.`;
-      }
+    
+    // Geçmiş veriyi incele ve son sinyali bul
+    const lastSignalInfo = findLastHistoricalSignal(marketData);
+    if (lastSignalInfo.signal) {
+        const message = `Bot başlatıldı. Geçmiş 1000 mum incelendi. Son sinyal: **${lastSignalInfo.signal}** (${lastSignalInfo.time})`;
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
     } else {
-      statusMessage += `Sinyal hesaplanamadı.`;
+        const message = `Bot başlatıldı. Geçmiş 1000 mumda sinyal bulunamadı.`;
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
     }
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, statusMessage);
-
+    
 
     connectWS();
 
