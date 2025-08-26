@@ -35,16 +35,17 @@ let lastTelegramMessage = '';
 let ws;
 let reconnectTimeout = null;
 
-let currentPosition = null; 
+let currentPosition = null;
 let entryPrice = null;
 let entryBarIndex = null;
+let isFirstRun = true;
 
 function checkStopLossAndFlip(klines) {
   if (!currentPosition) return;
-  
+
   const currentBarIndex = klines.length - 1;
   const barsSinceEntry = currentBarIndex - entryBarIndex;
-  
+
   const lastClose = klines[klines.length - 1].close;
 
   if (currentPosition === 'long' && CFG.USE_SL_LONG) {
@@ -94,11 +95,35 @@ async function startBot() {
     });
 
     console.log(`✅ ${marketData.length} adet geçmiş mum verisi başarıyla yüklendi.`);
+
+    // Bot başladığında anlık durumu kontrol et ve Telegram'a gönder
+    const signals = computeSignals(marketData, CFG);
+    const time = new Date().toLocaleString();
+    let statusMessage = `${time} - Bot başlatıldı. Güncel durum: `;
+
+    if (signals) {
+      if (signals.buy) {
+        statusMessage += `Alış sinyali mevcut.`;
+      } else if (signals.sell) {
+        statusMessage += `Satış sinyali mevcut.`;
+      } else {
+        statusMessage += `Sinyal yok.`;
+      }
+    } else {
+      statusMessage += `Sinyal hesaplanamadı.`;
+    }
+    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, statusMessage);
+
+
     connectWS();
 
   } catch (error) {
     console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
     console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
+    
+    // Geçmiş veri çekilemezse bile botu başlat ve durumu bildir
+    const time = new Date().toLocaleString();
+    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`);
     connectWS();
   }
 }
@@ -190,4 +215,3 @@ http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('Websocket client is running...\n');
 }).listen(port, () => console.log(`Server running on port ${port}`));
-
