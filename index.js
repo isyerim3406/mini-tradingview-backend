@@ -96,7 +96,6 @@ async function startBot() {
 
     console.log(`✅ ${marketData.length} adet geçmiş mum verisi başarıyla yüklendi.`);
 
-    // Bot başladığında anlık durumu kontrol et ve Telegram'a gönder
     const signals = computeSignals(marketData, CFG);
     const time = new Date().toLocaleString();
     let statusMessage = `${time} - Bot başlatıldı. Güncel durum: `;
@@ -118,100 +117,4 @@ async function startBot() {
     connectWS();
 
   } catch (error) {
-    console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
-    console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
-    
-    // Geçmiş veri çekilemezse bile botu başlat ve durumu bildir
-    const time = new Date().toLocaleString();
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`);
-    connectWS();
-  }
-}
-
-function connectWS() {
-  ws = new WebSocket(
-    `wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`
-  );
-
-  ws.onopen = () => {
-    console.log('✅ WebSocket connected');
-    if (reconnectTimeout) {
-      clearTimeout(reconnectTimeout);
-      reconnectTimeout = null;
-    }
-  };
-
-  ws.onclose = () => {
-    console.log('⚠️ WebSocket closed, reconnecting in 5s...');
-    scheduleReconnect();
-  };
-
-  ws.onerror = (err) => {
-    console.error('❌ WebSocket error:', err.message);
-    ws.close();
-  };
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    const kline = data.k;
-    if (!kline || !kline.x) return;
-
-    console.log(
-      `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
-    );
-    console.log(`Güncel veri sayısı: ${marketData.length}`);
-
-    marketData.push({
-      open: parseFloat(kline.o),
-      high: parseFloat(kline.h),
-      low: parseFloat(kline.l),
-      close: parseFloat(kline.c),
-      volume: parseFloat(kline.v),
-    });
-
-    if (marketData.length > 1000) marketData.shift();
-
-    const signals = computeSignals(marketData, CFG);
-
-    checkStopLossAndFlip(marketData);
-
-    if (!currentPosition) {
-        if (signals && signals.buy) {
-            const time = new Date().toLocaleString();
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - BUY signal for ${CFG.SYMBOL}!`);
-            currentPosition = 'long';
-            entryPrice = kline.c;
-            entryBarIndex = marketData.length - 1;
-            lastTelegramMessage = 'long';
-            console.log('✅ BUY signal sent!');
-        } else if (signals && signals.sell) {
-            const time = new Date().toLocaleString();
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
-            currentPosition = 'short';
-            entryPrice = kline.c;
-            entryBarIndex = marketData.length - 1;
-            lastTelegramMessage = 'short';
-            console.log('✅ SELL signal sent!');
-        }
-    }
-    
-    console.log(`Güncel pozisyon durumu: ${currentPosition ? currentPosition.toUpperCase() : 'Yok'}`);
-    console.log(`Güncel sinyal durumu: ${signals ? (signals.buy ? 'buy' : signals.sell ? 'sell' : 'null') : 'null'}`);
-  };
-}
-
-function scheduleReconnect() {
-  if (reconnectTimeout) return;
-  reconnectTimeout = setTimeout(() => {
-    console.log('🔄 Trying to reconnect...');
-    connectWS();
-  }, 5000);
-}
-
-startBot();
-
-const port = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Websocket client is running...\n');
-}).listen(port, () => console.log(`Server running on port ${port}`));
+    console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message
