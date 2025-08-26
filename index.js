@@ -112,11 +112,11 @@ async function startBot() {
     try {
         const historicalData = await binance.futuresCandles(CFG.SYMBOL, CFG.INTERVAL, { limit: 1000 });
         klines = historicalData.map(d => ({
-            open: parseFloat(d.open),
-            high: parseFloat(d.high),
-            low: parseFloat(d.low),
-            close: parseFloat(d.close),
-            volume: parseFloat(d.volume),
+            open: parseFloat(d.o),
+            high: parseFloat(d.h),
+            low: parseFloat(d.l),
+            close: parseFloat(d.c),
+            volume: parseFloat(d.v),
         }));
         console.log(`✅ ${klines.length} adet geçmiş mum verisi başarıyla yüklendi.`);
         
