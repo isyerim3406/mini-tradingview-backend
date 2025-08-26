@@ -20,7 +20,7 @@ const CFG = {
   MA_TYPE: process.env.MA_TYPE || 'SMA',
   BASELINE_SOURCE: process.env.BASELINE_SOURCE || 'close',
   KIDIV: parseInt(process.env.KIDIV) || 1,
-  M_BARS_BUY: parseInt(process.env.M_BARS_BUY) || 1,
+  M_BARS_BUY: parseInt(process. процесс.env.M_BARS_BUY) || 1,
   N_BARS_SELL: parseInt(process.env.N_BARS_SELL) || 3,
   USE_SL_LONG: process.env.USE_SL_LONG === 'true',
   SL_LONG_PCT: parseFloat(process.env.SL_LONG_PCT) || 2.0,
@@ -40,6 +40,14 @@ let entryPrice = null;
 let entryBarIndex = null;
 let isFirstRun = true;
 
+const getTurkishTime = (timestamp) => {
+    return new Date(timestamp).toLocaleTimeString('tr-TR', { timeZone: 'Europe/Istanbul' });
+};
+
+const getTurkishDateTime = (timestamp) => {
+    return new Date(timestamp).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+};
+
 function findLastHistoricalSignal(klines) {
   let lastSignal = null;
   let lastSignalTime = null;
@@ -50,10 +58,10 @@ function findLastHistoricalSignal(klines) {
 
     if (signals && signals.buy) {
       lastSignal = 'BUY';
-      lastSignalTime = new Date(klines[i].closeTime).toLocaleString();
+      lastSignalTime = getTurkishDateTime(klines[i].closeTime);
     } else if (signals && signals.sell) {
       lastSignal = 'SELL';
-      lastSignalTime = new Date(klines[i].closeTime).toLocaleString();
+      lastSignalTime = getTurkishDateTime(klines[i].closeTime);
     }
   }
 
@@ -73,7 +81,7 @@ function checkStopLossAndFlip(klines) {
     if (barsSinceEntry >= CFG.SL_LONG_ACT_BARS) {
       const slLongLevel = entryPrice * (1 - CFG.SL_LONG_PCT / 100.0);
       if (lastClose <= slLongLevel) {
-        const time = new Date().toLocaleString();
+        const time = getTurkishDateTime(new Date().getTime());
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - LONG POZISYON STOP LOSS VURDU. POZISYON SAT'A ÇEVRİLDİ. (Flip).`);
         currentPosition = 'short';
         entryPrice = lastClose;
@@ -86,7 +94,7 @@ function checkStopLossAndFlip(klines) {
     if (barsSinceEntry >= CFG.SL_SHORT_ACT_BARS) {
       const slShortLevel = entryPrice * (1 + CFG.SL_SHORT_PCT / 100.0);
       if (lastClose >= slShortLevel) {
-        const time = new Date().toLocaleString();
+        const time = getTurkishDateTime(new Date().getTime());
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SHORT POZISYON STOP LOSS VURDU. POZISYON AL'A ÇEVRİLDİ. (Flip).`);
         currentPosition = 'long';
         entryPrice = lastClose;
@@ -117,14 +125,16 @@ async function startBot() {
     marketData.push(...transformedKlines);
 
     console.log(`✅ ${marketData.length} adet geçmiş mum verisi başarıyla yüklendi.`);
-    
+
     // Geçmiş veriyi incele ve son sinyali bul
     const lastSignalInfo = findLastHistoricalSignal(marketData);
     if (lastSignalInfo.signal) {
         const message = `Bot başlatıldı. Geçmiş 1000 mum incelendi. Son sinyal: **${lastSignalInfo.signal}** (${lastSignalInfo.time})`;
+        console.log(`✅ Telegram'a gönderiliyor: ${message}`);
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
     } else {
         const message = `Bot başlatıldı. Geçmiş 1000 mumda sinyal bulunamadı.`;
+        console.log(`✅ Telegram'a gönderiliyor: ${message}`);
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
     }
     
@@ -135,8 +145,10 @@ async function startBot() {
     console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
     console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
 
-    const time = new Date().toLocaleString();
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`);
+    const time = getTurkishDateTime(new Date().getTime());
+    const message = `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`;
+    console.log(`✅ Telegram'a gönderiliyor: ${message}`);
+    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
     connectWS();
   }
 }
@@ -170,7 +182,7 @@ function connectWS() {
     if (!kline || !kline.x) return;
 
     // Mumun kapanış zamanını alıp yerel saate dönüştürme
-    const closeTime = new Date(kline.T).toLocaleTimeString('tr-TR');
+    const closeTime = getTurkishTime(kline.T);
 
     console.log(
       `Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x}`
@@ -207,16 +219,20 @@ function connectWS() {
 
     if (!currentPosition) {
         if (signals && signals.buy) {
-            const time = new Date().toLocaleString();
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - BUY signal for ${CFG.SYMBOL}!`);
+            const time = getTurkishDateTime(kline.T);
+            const message = `${time} - BUY signal for ${CFG.SYMBOL}!`;
+            console.log(`✅ Telegram'a gönderiliyor: ${message}`);
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
             currentPosition = 'long';
             entryPrice = kline.c;
             entryBarIndex = marketData.length - 1;
             lastTelegramMessage = 'long';
             console.log('✅ BUY signal sent!');
         } else if (signals && signals.sell) {
-            const time = new Date().toLocaleString();
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - SELL signal for ${CFG.SYMBOL}!`);
+            const time = getTurkishDateTime(kline.T);
+            const message = `${time} - SELL signal for ${CFG.SYMBOL}!`;
+            console.log(`✅ Telegram'a gönderiliyor: ${message}`);
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
             currentPosition = 'short';
             entryPrice = kline.c;
             entryBarIndex = marketData.length - 1;
