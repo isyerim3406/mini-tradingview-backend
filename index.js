@@ -173,6 +173,20 @@ function connectWS() {
 
     checkStopLossAndFlip(marketData);
 
+    // Her mum kapandığında durumu konsola yaz
+    if (signals) {
+      if (signals.buy) {
+        console.log('🟢 Güncel durum: AL sinyali mevcut.');
+      } else if (signals.sell) {
+        console.log('🔴 Güncel durum: SAT sinyali mevcut.');
+      } else {
+        console.log('⚪ Güncel durum: Sinyal yok.');
+      }
+    } else {
+      console.log('⚠️ Sinyal hesaplanamıyor.');
+    }
+
+
     if (!currentPosition) {
         if (signals && signals.buy) {
             const time = new Date().toLocaleString();
@@ -194,7 +208,6 @@ function connectWS() {
     }
     
     console.log(`Güncel pozisyon durumu: ${currentPosition ? currentPosition.toUpperCase() : 'Yok'}`);
-    console.log(`Güncel sinyal durumu: ${signals ? (signals.buy ? 'buy' : signals.sell ? 'sell' : 'null') : 'null'}`);
   };
 }
 
