@@ -5,15 +5,10 @@ export function computeSignals(klines, CFG) {
         return { buy: false, sell: false };
     }
     
-    // Geçmiş veriyi al
     const closePrices = klines.map(k => k.close);
-    const highPrices = klines.map(k => k.high);
-    const lowPrices = klines.map(k => k.low);
-
     const lastClose = closePrices[closePrices.length - 1];
     
-    // Temel göstergeleri hesapla
-    const baseline = movingAverage(closePrices, CFG.LEN, CFG.MA_TYPE, { kidiv: CFG.KIDIV });
+    const baseline = movingAverage(closePrices, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
     const atrValue = atr(klines, CFG.ATR_LEN, CFG.ATR_SMOOTHING);
 
     const bbmcUpperATR = baseline + atrValue * CFG.ATR_MULT;
@@ -22,7 +17,6 @@ export function computeSignals(klines, CFG) {
     const ssl1Result = ssl1(klines, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
     const ssl1Line = ssl1Result.ssl1Line;
 
-    // Alım ve satım sinyallerini hesapla
     let buySignal = false;
     let sellSignal = false;
 
@@ -47,10 +41,6 @@ export function computeSignals(klines, CFG) {
             sellSignal = true;
         }
     }
-    
-    // Stop Loss ve Flip mekanizması (basitleştirilmiş)
-    // Bu kısım Pine Script'teki gibi pozisyon takibi gerektirir.
-    // Şimdilik sadece ana giriş sinyallerini döndürüyoruz.
     
     return { buy: buySignal, sell: sellSignal };
 }
