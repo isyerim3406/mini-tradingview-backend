@@ -112,7 +112,7 @@ ws.on('error', (error) => {
 async function startBot() {
     console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
     try {
-        const historicalData = await binance.futuresCandles(CFG.SYMBOL, CFG.INTERVAL, { limit: 1000 });
+        const historicalData = await binance.futuresCandles({ symbol: CFG.SYMBOL, interval: CFG.INTERVAL, limit: 1000 });
         klines = historicalData.map(d => ({
             open: parseFloat(d.o),
             high: parseFloat(d.h),
