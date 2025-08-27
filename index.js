@@ -90,6 +90,7 @@ ws.on('message', async (data) => {
             low: parseFloat(kline.l),
             close: parseFloat(kline.c),
             volume: parseFloat(kline.v),
+            closeTime: kline.T // Canlı veriden zaman damgasını al
         });
 
         if (klines.length > 2000) {
@@ -117,17 +118,34 @@ async function startBot() {
     try {
         const historicalData = await binance.futuresCandles({ symbol: CFG.SYMBOL, interval: CFG.INTERVAL, limit: 1000 });
         klines = historicalData.map(d => ({
-            open: parseFloat(d.o),
-            high: parseFloat(d.h),
-            low: parseFloat(d.l),
-            close: parseFloat(d.c),
-            volume: parseFloat(d.v),
+            open: parseFloat(d.open),
+            high: parseFloat(d.high),
+            low: parseFloat(d.low),
+            close: parseFloat(d.close),
+            volume: parseFloat(d.volume),
+            closeTime: d.closeTime // Tarih ve saat bilgisini ekle
         }));
         console.log(`✅ ${klines.length} adet geçmiş mum verisi başarıyla yüklendi.`);
         
-        const time = getTurkishDateTime(new Date().getTime());
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - Bot başarıyla başlatıldı. Geçmiş veriler yüklendi.`);
+        // Geçmiş veriyi işleyip son sinyali bul
+        for (let i = 0; i < klines.length; i++) {
+            const tempKlines = klines.slice(0, i + 1);
+            lastSignal = computeSignals(tempKlines, CFG);
+        }
         
+        const lastBar = klines[klines.length - 1];
+        const lastBarTime = getTurkishDateTime(lastBar.closeTime);
+
+        let status = 'Nötr';
+        if (lastSignal.buy) {
+            status = 'AL';
+        } else if (lastSignal.sell) {
+            status = 'SAT';
+        }
+        
+        console.log(`✅ Geçmiş veriler işlendi. Son Sinyal: ${status} | Bar Zamanı: ${lastBarTime}`);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${getTurkishDateTime(new Date().getTime())} - Bot başarıyla başlatıldı. Geçmiş veriler yüklendi.`);
+
     } catch (error) {
         console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
         console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
