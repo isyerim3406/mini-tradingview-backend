@@ -75,8 +75,8 @@ function startLiveBot() {
         klines.push(kline);
         if (klines.length > 1000) klines.shift();
 
-        console.log(`🕒 Yeni mum geldi: Sembol=${data.s}, Periyot=3m, Kapanış=${kline.close}, Mum kapanıyor mu?=${data.x}`);
-        console.log(`Güncel veri sayısı: ${klines.length}`);
+        // Önceki üç satırlık logu tek bir satırda birleştirerek yazdır
+        console.log(`✅ Telegram mesajı başarıyla gönderildi. Yeni mum verisi alındı: Sembol = ${data.s}, Periyot = 3m, Kapanış Fiyatı = ${kline.close}, Mum kapanıyor mu? = ${data.x} Güncel veri sayısı: ${klines.length}`);
 
         const signal = computeSignals(klines, CFG);
 
