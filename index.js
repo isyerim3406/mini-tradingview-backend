@@ -19,22 +19,20 @@ const CFG = {
 let klines = [];
 let lastTelegramMessage = '';
 
-// Yardımcı fonksiyon: Telegram mesajı gönderme
 async function sendTelegramMessage(token, chatId, message) {
     if (!token || !chatId) return;
     try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ chat_id: chatId, text: message })
         });
-        if (res.ok) console.log("✅ Telegram mesajı başarıyla gönderildi.");
+        console.log("✅ Telegram mesajı başarıyla gönderildi.");
     } catch (err) {
         console.error("❌ Telegram mesajı gönderilemedi:", err.message);
     }
 }
 
-// Geçmiş veriyi çekme fonksiyonu
 async function fetchHistoricalData() {
     console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
     try {
@@ -55,7 +53,6 @@ async function fetchHistoricalData() {
     }
 }
 
-// Sinyal hesaplaması ve işlem fonksiyonu
 async function processData() {
     let lastNonNeutralSignal = null;
     let signalCount = 0;
@@ -69,7 +66,7 @@ async function processData() {
         const subKlines = klines.slice(0, i + 1);
         const signals = computeSignals(subKlines, CFG);
         
-        // Zamanı yerel saate göre formatla
+        // Bar zamanını yerel saat dilimine göre doğru formatla
         const barTime = new Date(klines[i].closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
         if (signals.buy) {
@@ -85,7 +82,6 @@ async function processData() {
     sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu.`);
 }
 
-// WebSocket bağlantısı
 const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
 ws.on('open', () => {
@@ -100,8 +96,9 @@ ws.on('open', () => {
 ws.on('message', async (data) => {
     const klineData = JSON.parse(data.toString());
     const kline = klineData.k;
-    
-    if (kline.x) { // Mum kapanışını kontrol et
+
+    // Her mum kapanışında log mesajı yazdır
+    if (kline.x) {
         const newBar = {
             open: parseFloat(kline.o),
             high: parseFloat(kline.h),
@@ -119,21 +116,18 @@ ws.on('message', async (data) => {
         const signals = computeSignals(klines, CFG);
         
         const barIndex = klines.length - 1;
-        // Zamanı yerel saate göre formatla
+        // Bar zamanını yerel saat dilimine göre doğru formatla
         const barTime = new Date(newBar.closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+        
+        // Her yeni mum kapandığında bu log mesajı görünecek
+        console.log(`Yeni mum verisi alındı. Bar No: ${barIndex + 1}, Zaman: ${barTime}, Kapanış Fiyatı: ${newBar.close}`);
 
         if (signals.buy) {
-            const logMessage = `AL sinyali geldi! Bar No: ${barIndex + 1}, Zaman: ${barTime}, Fiyat: ${newBar.close}`;
-            console.log(logMessage);
-            
             if (lastTelegramMessage !== 'buy') {
                 sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `AL sinyali geldi!`);
                 lastTelegramMessage = 'buy';
             }
         } else if (signals.sell) {
-            const logMessage = `SAT sinyali geldi! Bar No: ${barIndex + 1}, Zaman: ${barTime}, Fiyat: ${newBar.close}`;
-            console.log(logMessage);
-            
             if (lastTelegramMessage !== 'sell') {
                 sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `SAT sinyali geldi!`);
                 lastTelegramMessage = 'sell';
@@ -156,7 +150,6 @@ ws.on('error', (error) => {
     console.error('❌ WebSocket hatası:', error.message);
 });
 
-// Render'ın uygulamayı sonlandırmasını önlemek için basit bir web sunucusu başlat
 app.get('/', (req, res) => {
     res.send('Bot çalışıyor!');
 });
