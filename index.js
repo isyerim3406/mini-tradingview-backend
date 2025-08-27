@@ -14,16 +14,6 @@ const CFG = {
     INTERVAL: process.env.INTERVAL || '1m', 
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
-    ENTRY_SIGNAL_TYPE: process.env.ENTRY_SIGNAL_TYPE,
-    LEN: parseInt(process.env.LEN),
-    ATR_LEN: parseInt(process.env.ATR_LEN),
-    ATR_SMOOTHING: process.env.ATR_SMOOTHING,
-    ATR_MULT: parseFloat(process.env.ATR_MULT),
-    MA_TYPE: process.env.MA_TYPE,
-    BASELINE_SOURCE: process.env.BASELINE_SOURCE,
-    KIDIV: parseInt(process.env.KIDIV),
-    M_BARS_BUY: parseInt(process.env.M_BARS_BUY),
-    N_BARS_SELL: parseInt(process.env.N_BARS_SELL),
 };
 
 let klines = [];
@@ -70,6 +60,12 @@ async function processData() {
     // Geçmiş verileri bar bar işleyerek strateji durumunu güncel tut
     let lastNonNeutralSignal = null;
     let signalCount = 0;
+    
+    // Yeterli bar yoksa işlemi durdur
+    if (klines.length < 27) { // 26 (slowMA) + 1 (ilk bar)
+        console.log("Geçmiş veri yetersiz, en az 27 bar gerekli.");
+        return;
+    }
 
     for (let i = 0; i < klines.length; i++) {
         const subKlines = klines.slice(0, i + 1);
@@ -119,7 +115,6 @@ ws.on('message', async (data) => {
             klines.shift();
         }
 
-        // Sadece son barı işleyerek sinyal hesapla
         const signals = computeSignals(klines, CFG);
         
         const time = new Date().toLocaleString();
