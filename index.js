@@ -1,106 +1,166 @@
-// index.js
-import express from 'express';
-import fetch from 'node-fetch'; // Telegram için
+import pkg from 'binance-api-node';
 import WebSocket from 'ws';
+import { getTurkishDateTime, sendTelegramMessage } from './utils.js';
 import { computeSignals } from './strategy.js';
-import fs from 'fs';
+import dotenv from 'dotenv';
+import express from 'express';
 
+const Binance = pkg.default;
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
-// CFG ayarları
+dotenv.config();
+
 const CFG = {
-    ENTRY_SIGNAL_TYPE: "SSL1 Kesişimi", // veya "BBMC+ATR Bands"
-    LEN: 20,
-    MA_TYPE: "SMA", // SMA, EMA vb.
-    BASELINE_SOURCE: "close", // close, hl2, ohlc4
-    KIDIV: 1,
-    ATR_LEN: 14,
-    ATR_SMOOTHING: 1,
-    ATR_MULT: 1.5,
-    M_BARS_BUY: 2,
-    N_BARS_SELL: 2
+    SYMBOL: process.env.SYMBOL || 'ETHUSDT',
+    INTERVAL: process.env.INTERVAL || '3m',
+    TG_TOKEN: process.env.TG_TOKEN,
+    TG_CHAT_ID: process.env.TG_CHAT_ID,
+    API_KEY: process.env.API_KEY,
+    API_SECRET: process.env.API_SECRET,
+    ENTRY_SIGNAL_TYPE: process.env.ENTRY_SIGNAL_TYPE,
+    LEN: parseInt(process.env.LEN),
+    ATR_LEN: parseInt(process.env.ATR_LEN),
+    ATR_SMOOTHING: process.env.ATR_SMOOTHING,
+    ATR_MULT: parseFloat(process.env.ATR_MULT),
+    MA_TYPE: process.env.MA_TYPE,
+    BASELINE_SOURCE: process.env.BASELINE_SOURCE,
+    KIDIV: parseInt(process.env.KIDIV),
+    M_BARS_BUY: parseInt(process.env.M_BARS_BUY),
+    N_BARS_SELL: parseInt(process.env.N_BARS_SELL),
+    USE_SL_LONG: process.env.USE_SL_LONG === 'true',
+    SL_LONG_PCT: parseFloat(process.env.SL_LONG_PCT),
+    SL_LONG_ACT_BARS: parseInt(process.env.SL_LONG_ACT_BARS),
+    USE_SL_SHORT: process.env.USE_SL_SHORT === 'true',
+    SL_SHORT_PCT: parseFloat(process.env.SL_SHORT_PCT),
+    SL_SHORT_ACT_BARS: parseInt(process.env.SL_SHORT_ACT_BARS),
 };
 
-let klines = []; // geçmiş bar verisi
-let lastSignal = { type: null, barTime: null };
+const binance = Binance({
+    apiKey: CFG.API_KEY,
+    apiSecret: CFG.API_SECRET,
+});
 
-async function sendTelegram(msg) {
-    const token = process.env.TG_TOKEN;
-    const chatId = process.env.TG_CHATID;
-    if (!token || !chatId) return;
+let klines = [];
+let lastSignal = { buy: false, sell: false };
 
-    try {
-        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: msg })
-        });
-        if (res.ok) console.log("✅ Telegram mesajı başarıyla gönderildi.");
-    } catch (err) {
-        console.error("❌ Telegram mesajı gönderilemedi:", err.message);
+function trade(signal) {
+    const time = getTurkishDateTime(new Date().getTime());
+    
+    if (signal.buy) {
+        const message = `${time} - AL SİNYALİ GELDİ! Sembol: ${CFG.SYMBOL}, Fiyat: ${klines[klines.length - 1].close.toFixed(2)}`;
+        console.log(`✅ Telegram'a gönderiliyor: ${message}`);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
+    } else if (signal.sell) {
+        const message = `${time} - SAT SİNYALİ GELDİ! Sembol: ${CFG.SYMBOL}, Fiyat: ${klines[klines.length - 1].close.toFixed(2)}`;
+        console.log(`✅ Telegram'a gönderiliyor: ${message}`);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
     }
 }
 
-// Başlangıçta son sinyali geçmiş barlarla hesapla
-function computeLastSignal() {
-    if (klines.length === 0) return;
+async function checkSignals() {
+    const newSignal = computeSignals(klines, CFG);
 
-    const signal = computeSignals(klines, CFG);
-    if (signal.buy) lastSignal = { type: 'BUY', barTime: klines[klines.length -1].closeTime };
-    else if (signal.sell) lastSignal = { type: 'SELL', barTime: klines[klines.length -1].closeTime };
-
-    if (lastSignal.type)
-        console.log(`⏱ Başlangıçta son sinyal: ${lastSignal.type}, Bar zamanı: ${new Date(lastSignal.barTime).toISOString()}`);
-    else
-        console.log("⛔ Geçmiş 1000 bar veride sinyal oluşmamış.");
+    if (newSignal.buy && !lastSignal.buy) {
+        trade({ buy: true, sell: false });
+    }
+    if (newSignal.sell && !lastSignal.sell) {
+        trade({ buy: false, sell: true });
+    }
+    
+    lastSignal = newSignal;
 }
 
-// WebSocket ile canlı veri simülasyonu
-function startLiveBot() {
-    const ws = new WebSocket('wss://example.com/stream'); // Gerçek endpoint ile değiştir
+const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
-    ws.on('open', () => console.log("✅ WebSocket bağlantısı açıldı."));
-    ws.on('message', (msg) => {
-        const data = JSON.parse(msg);
-        const kline = {
-            openTime: data.t,
-            open: parseFloat(data.o),
-            high: parseFloat(data.h),
-            low: parseFloat(data.l),
-            close: parseFloat(data.c),
-            volume: parseFloat(data.v),
-            closeTime: data.T
-        };
-        klines.push(kline);
-        if (klines.length > 1000) klines.shift();
+ws.on('open', () => {
+    console.log('✅ WebSocket connected');
+});
 
-        // Önceki üç satırlık logu tek bir satırda birleştirerek yazdır
-        console.log(`✅ Telegram mesajı başarıyla gönderildi. Yeni mum verisi alındı: Sembol = ${data.s}, Periyot = 3m, Kapanış Fiyatı = ${kline.close}, Mum kapanıyor mu? = ${data.x} Güncel veri sayısı: ${klines.length}`);
+ws.on('message', async (data) => {
+    const klineData = JSON.parse(data.toString());
+    const kline = klineData.k;
+    
+    if (kline.x) { 
+        // Mum kapandığında log yazdır
+        console.log(`✅ Telegram mesajı başarıyla gönderildi. Yeni mum verisi alındı: Sembol = ${kline.s}, Periyot = ${kline.i}, Kapanış Fiyatı = ${kline.c}, Mum kapanıyor mu? = ${kline.x} Güncel veri sayısı: ${klines.length + 1}`);
+        
+        klines.push({
+            open: parseFloat(kline.o),
+            high: parseFloat(kline.h),
+            low: parseFloat(kline.l),
+            close: parseFloat(kline.c),
+            volume: parseFloat(kline.v),
+            closeTime: kline.T
+        });
 
-        const signal = computeSignals(klines, CFG);
-
-        if (signal.buy) {
-            lastSignal = { type: 'BUY', barTime: kline.closeTime };
-            console.log(`🟢 BUY sinyali üretildi: ${new Date(kline.closeTime).toISOString()}`);
-            sendTelegram(`🟢 BUY sinyali: ${new Date(kline.closeTime).toISOString()}`);
-        } else if (signal.sell) {
-            lastSignal = { type: 'SELL', barTime: kline.closeTime };
-            console.log(`🔴 SELL sinyali üretildi: ${new Date(kline.closeTime).toISOString()}`);
-            sendTelegram(`🔴 SELL sinyali: ${new Date(kline.closeTime).toISOString()}`);
+        if (klines.length > 2000) {
+            klines = klines.slice(klines.length - 1000);
         }
-    });
+
+        await checkSignals();
+    }
+});
+
+ws.on('close', (code, reason) => {
+    console.log(`❌ WebSocket bağlantısı kesildi. Kod: ${code}, Neden: ${reason.toString()}`);
+    console.log('Yeniden bağlanılıyor...');
+    setTimeout(startBot, 5000); 
+});
+
+ws.on('error', (error) => {
+    console.error('❌ WebSocket hatası:', error.message);
+});
+
+async function startBot() {
+    console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
+    try {
+        const historicalData = await binance.futuresCandles({ symbol: CFG.SYMBOL, interval: CFG.INTERVAL, limit: 1000 });
+        klines = historicalData.map(d => ({
+            open: parseFloat(d.open),
+            high: parseFloat(d.high),
+            low: parseFloat(d.low),
+            close: parseFloat(d.close),
+            volume: parseFloat(d.volume),
+            closeTime: d.closeTime
+        }));
+        console.log(`✅ ${klines.length} adet geçmiş mum verisi başarıyla yüklendi.`);
+        
+        let lastNonNeutralSignal = { type: 'Nötr', time: null };
+
+        for (let i = 0; i < klines.length; i++) {
+            const tempKlines = klines.slice(0, i + 1);
+            const signal = computeSignals(tempKlines, CFG);
+            
+            if (signal.buy) {
+                lastNonNeutralSignal = { type: 'AL', time: klines[i].closeTime };
+            } else if (signal.sell) {
+                lastNonNeutralSignal = { type: 'SAT', time: klines[i].closeTime };
+            }
+        }
+        
+        const lastSignalTime = lastNonNeutralSignal.time ? getTurkishDateTime(lastNonNeutralSignal.time) : 'Belirtilmemiş';
+
+        console.log(`✅ Geçmiş veriler işlendi. Son Sinyal: ${lastNonNeutralSignal.type} | Bar Zamanı: ${lastSignalTime}`);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${getTurkishDateTime(new Date().getTime())} - Bot başarıyla başlatıldı. Geçmiş veriler yüklendi.`);
+
+    } catch (error) {
+        console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
+        console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
+        klines = [];
+        
+        const time = getTurkishDateTime(new Date().getTime());
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${time} - Bot başlatıldı ancak geçmiş veriler alınamadı. Canlı veriler bekleniyor.`);
+    }
 }
 
-// Express server
-app.get('/', (req, res) => res.send("Mini TradingView Backend Çalışıyor ✅"));
+startBot();
+
+// Render'ın uygulamayı sonlandırmasını önlemek için basit bir web sunucusu başlat
+app.get('/', (req, res) => {
+    res.send('Bot çalışıyor!');
+});
 
 app.listen(PORT, () => {
     console.log(`✅ Sunucu http://localhost:${PORT} adresinde dinliyor`);
-    console.log("==> Your service is live 🎉");
-    console.log("==> Başlangıç geçmişi ile son sinyal hesaplanıyor...");
-    // 1000 bar veriyi oku veya fetch et (simülasyon)
-    // Örnek JSON: klines = [...];
-    computeLastSignal();
-    startLiveBot();
 });
