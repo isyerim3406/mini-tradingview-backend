@@ -1,38 +1,69 @@
-import { movingAverage, atr, ssl1, crossover, crossunder } from './indicators.js';
-
 export function computeSignals(klines, CFG) {
-    if (klines.length < CFG.LEN) return { buy: false, sell: false };
+    const len = CFG.LEN || 14;
+    const atrLen = CFG.ATR_LEN || 14;
+    const atrMult = CFG.ATR_MULT || 1.0;
+    const maType = CFG.MA_TYPE || "SMA";
+    const baselineSource = CFG.BASELINE_SOURCE || "close";
 
-    const closePrices = klines.map(k => k.close);
-    const sourcePrices = CFG.BASELINE_SOURCE === 'close' ? closePrices
-        : CFG.BASELINE_SOURCE === 'open' ? klines.map(k => k.open)
-        : CFG.BASELINE_SOURCE === 'high' ? klines.map(k => k.high)
-        : klines.map(k => k.low);
+    const closes = klines.map(k => parseFloat(k.close));
+    const highs = klines.map(k => parseFloat(k.high));
+    const lows = klines.map(k => parseFloat(k.low));
 
-    const lastClose = closePrices.at(-1);
-    const baseline = movingAverage(sourcePrices, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
-    const atrValue = atr(klines, CFG.ATR_LEN, CFG.ATR_SMOOTHING);
-
-    const bbmcUpperATR = baseline + atrValue * CFG.ATR_MULT;
-    const bbmcLowerATR = baseline - atrValue * CFG.ATR_MULT;
-    
-    const ssl1Result = ssl1(klines, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
-    const ssl1Line = ssl1Result.ssl1Line;
-
-    let buySignal = false;
-    let sellSignal = false;
-
-    if (CFG.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
-        const consecutiveClosesAbove = closePrices.slice(-CFG.M_BARS_BUY).every(c => c > bbmcUpperATR);
-        const consecutiveClosesBelow = closePrices.slice(-CFG.N_BARS_SELL).every(c => c < bbmcLowerATR);
-        if (consecutiveClosesAbove) buySignal = true;
-        if (consecutiveClosesBelow) sellSignal = true;
-    } else if (CFG.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
-        const prevClose = closePrices.at(-2);
-        const prevSsl1 = ssl1(klines.slice(0, -1), CFG.LEN, CFG.MA_TYPE, CFG.KIDIV).ssl1Line;
-        if (crossover([prevClose, lastClose], [prevSsl1, ssl1Line])) buySignal = true;
-        if (crossunder([prevClose, lastClose], [prevSsl1, ssl1Line])) sellSignal = true;
+    function SMA(arr, period) {
+        if (arr.length < period) return null;
+        const sum = arr.slice(-period).reduce((a, b) => a + b, 0);
+        return sum / period;
     }
 
-    return { buy: buySignal, sell: sellSignal };
+    function EMA(arr, period) {
+        if (arr.length < period) return null;
+        const k = 2 / (period + 1);
+        let ema = arr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        for (let i = period; i < arr.length; i++) {
+            ema = arr[i] * k + ema * (1 - k);
+        }
+        return ema;
+    }
+
+    function getMA(arr, period) {
+        return maType === "EMA" ? EMA(arr, period) : SMA(arr, period);
+    }
+
+    // Baseline hesaplama
+    const sourceArr = baselineSource === "close" ? closes :
+                      baselineSource === "open" ? klines.map(k => k.open) :
+                      baselineSource === "high" ? highs :
+                      baselineSource === "low" ? lows : closes;
+
+    const baseline = getMA(sourceArr, len);
+
+    // ATR hesaplama (basit)
+    function ATR(highs, lows, closes, period) {
+        if (closes.length < period + 1) return null;
+        let trs = [];
+        for (let i = closes.length - period; i < closes.length; i++) {
+            const tr = Math.max(
+                highs[i] - lows[i],
+                Math.abs(highs[i] - closes[i - 1]),
+                Math.abs(lows[i] - closes[i - 1])
+            );
+            trs.push(tr);
+        }
+        return trs.reduce((a, b) => a + b, 0) / period;
+    }
+
+    const atr = ATR(highs, lows, closes, atrLen);
+
+    // Sinyal mantığı (örnek: SSL1 cross)
+    let buy = false;
+    let sell = false;
+    if (klines.length >= 2) {
+        const prevClose = closes[closes.length - 2];
+        const lastClose = closes[closes.length - 1];
+
+        if (prevClose < baseline && lastClose > baseline) buy = true;
+        if (prevClose > baseline && lastClose < baseline) sell = true;
+    }
+
+    return { buy, sell, baseline, atr };
 }
