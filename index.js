@@ -3,7 +3,7 @@ import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
-import Binance from 'binance-api-node'; // Import satırı düzeltildi
+import { binance } from 'binance-api-node'; // Düzeltildi
 
 dotenv.config();
 
@@ -21,7 +21,7 @@ const CFG = {
 };
 
 // Binance API istemcisini başlat
-const client = Binance({ // Çağrı düzeltildi
+const client = binance({ // Çağrı düzeltildi
   apiKey: CFG.BINANCE_API_KEY,
   apiSecret: CFG.BINANCE_SECRET_KEY
 });
