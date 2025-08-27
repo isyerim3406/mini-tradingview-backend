@@ -1,6 +1,5 @@
 import WebSocket from 'ws';
-import { SSLHybridStrategy } from './strategy.js';
-import { TechnicalIndicators } from './indicator.js';
+import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
@@ -10,34 +9,21 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Sınıfları başlat
-const indicators = new TechnicalIndicators();
-const strategy = new SSLHybridStrategy(indicators);
-
-// Çevresel değişkenlerden yapılandırmayı al
-strategy.updateConfig({
-    entrySignalType: process.env.ENTRY_SIGNAL_TYPE || "BBMC+ATR Bands", // Varsayılanı 'BBMC+ATR Bands' olarak değiştirdim
-    maType: process.env.MA_TYPE || "SMA",
-    len: parseInt(process.env.LEN) || 20,
-    atrlen: parseInt(process.env.ATR_LEN) || 14,
-    mult: parseFloat(process.env.ATR_MULT) || 1.5,
-    smoothing: process.env.ATR_SMOOTHING || "WMA",
-    kidiv: parseInt(process.env.KIDIV) || 1,
-    m_bars_buy: parseInt(process.env.M_BARS_BUY) || 2,
-    n_bars_sell: parseInt(process.env.N_BARS_SELL) || 2,
-    useStopLossAl: process.env.USE_SL_LONG === 'true',
-    stopLossAlPercent: parseFloat(process.env.SL_LONG_PCT) || 2.0,
-    stopLossAlActivationBars: parseInt(process.env.SL_LONG_ACT_BARS) || 1,
-    useStopLossSat: process.env.USE_SL_SHORT === 'true',
-    stopLossSatPercent: parseFloat(process.env.SL_SHORT_PCT) || 2.0,
-    stopLossSatActivationBars: parseInt(process.env.SL_SHORT_ACT_BARS) || 1
-});
-
 const CFG = {
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
     INTERVAL: process.env.INTERVAL || '1m', 
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
+    ENTRY_SIGNAL_TYPE: process.env.ENTRY_SIGNAL_TYPE,
+    LEN: parseInt(process.env.LEN),
+    ATR_LEN: parseInt(process.env.ATR_LEN),
+    ATR_SMOOTHING: process.env.ATR_SMOOTHING,
+    ATR_MULT: parseFloat(process.env.ATR_MULT),
+    MA_TYPE: process.env.MA_TYPE,
+    BASELINE_SOURCE: process.env.BASELINE_SOURCE,
+    KIDIV: parseInt(process.env.KIDIV),
+    M_BARS_BUY: parseInt(process.env.M_BARS_BUY),
+    N_BARS_SELL: parseInt(process.env.N_BARS_SELL),
 };
 
 let klines = [];
@@ -81,35 +67,18 @@ async function fetchHistoricalData() {
 
 // Sinyal hesaplaması ve işlem fonksiyonu
 async function processData() {
-    const ohlcData = {
-        open: klines.map(k => k.open),
-        high: klines.map(k => k.high),
-        low: klines.map(k => k.low),
-        close: klines.map(k => k.close)
-    };
-    
     // Geçmiş verileri bar bar işleyerek strateji durumunu güncel tut
     let lastNonNeutralSignal = null;
     let signalCount = 0;
 
     for (let i = 0; i < klines.length; i++) {
-        const subData = {
-            open: ohlcData.open.slice(0, i + 1),
-            high: ohlcData.high.slice(0, i + 1),
-            low: ohlcData.low.slice(0, i + 1),
-            close: ohlcData.close.slice(0, i + 1)
-        };
+        const subKlines = klines.slice(0, i + 1);
+        const signals = computeSignals(subKlines, CFG);
 
-        const calculatedData = strategy.calculate(subData);
-        const entrySignals = strategy.calculateEntrySignals(calculatedData, subData);
-
-        const currentLongSignal = entrySignals.long[entrySignals.long.length - 1];
-        const currentShortSignal = entrySignals.short[entrySignals.short.length - 1];
-
-        if (currentLongSignal) {
+        if (signals.buy) {
             lastNonNeutralSignal = 'AL';
             signalCount++;
-        } else if (currentShortSignal) {
+        } else if (signals.sell) {
             lastNonNeutralSignal = 'SAT';
             signalCount++;
         }
@@ -150,28 +119,17 @@ ws.on('message', async (data) => {
             klines.shift();
         }
 
-        const ohlcData = {
-            open: klines.map(k => k.open),
-            high: klines.map(k => k.high),
-            low: klines.map(k => k.low),
-            close: klines.map(k => k.close)
-        };
-        
         // Sadece son barı işleyerek sinyal hesapla
-        const calculatedData = strategy.calculate(ohlcData);
-        const entrySignals = strategy.calculateEntrySignals(calculatedData, ohlcData);
-        
-        const currentLongSignal = entrySignals.long[entrySignals.long.length - 1];
-        const currentShortSignal = entrySignals.short[entrySignals.short.length - 1];
+        const signals = computeSignals(klines, CFG);
         
         const time = new Date().toLocaleString();
         
-        if (currentLongSignal && lastTelegramMessage !== 'buy') {
+        if (signals.buy && lastTelegramMessage !== 'buy') {
             const message = `${time} - AL sinyali geldi! Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
             console.log(message);
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
             lastTelegramMessage = 'buy';
-        } else if (currentShortSignal && lastTelegramMessage !== 'sell') {
+        } else if (signals.sell && lastTelegramMessage !== 'sell') {
             const message = `${time} - SAT sinyali geldi! Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
             console.log(message);
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
