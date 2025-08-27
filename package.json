@@ -1,21 +1,26 @@
 {
-  "name": "mini-tv-alert-engine-ws",
+  "name": "macd-crossover-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "MACD Crossover Strategy Trading Bot for Binance Futures",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "node-fetch": "^3.3.1",
     "technicalindicators": "^3.1.0",
     "ws": "^8.17.0"
-  }
+  },
+  "keywords": [
+    "trading",
+    "bot",
+    "binance",
+    "futures",
+    "macd"
+  ],
+  "author": "",
+  "license": "ISC"
 }
-
