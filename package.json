@@ -12,7 +12,8 @@
     "express": "^4.19.2",
     "node-fetch": "^3.3.1",
     "technicalindicators": "^3.1.0",
-    "ws": "^8.17.0"
+    "ws": "^8.17.0",
+    "binance-api-node": "^3.1.2"
   },
   "keywords": [
     "trading",
