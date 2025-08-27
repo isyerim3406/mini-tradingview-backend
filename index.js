@@ -68,7 +68,9 @@ async function processData() {
     for (let i = 0; i < klines.length; i++) {
         const subKlines = klines.slice(0, i + 1);
         const signals = computeSignals(subKlines, CFG);
-        const barTime = new Date(klines[i].closeTime).toLocaleString();
+        
+        // Zamanı yerel saate göre formatla
+        const barTime = new Date(klines[i].closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
         if (signals.buy) {
             lastNonNeutralSignal = `AL (Bar: ${i + 1}, Zaman: ${barTime})`;
@@ -117,8 +119,9 @@ ws.on('message', async (data) => {
         const signals = computeSignals(klines, CFG);
         
         const barIndex = klines.length - 1;
-        const barTime = new Date(newBar.closeTime).toLocaleString();
-        
+        // Zamanı yerel saate göre formatla
+        const barTime = new Date(newBar.closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+
         if (signals.buy) {
             const logMessage = `AL sinyali geldi! Bar No: ${barIndex + 1}, Zaman: ${barTime}, Fiyat: ${newBar.close}`;
             console.log(logMessage);
