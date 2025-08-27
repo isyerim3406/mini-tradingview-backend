@@ -1,4 +1,4 @@
-import { movingAverage, atr, ssl1, crossover, crossunder } from './indicator.js';
+import { movingAverage, atr, ssl1, crossover, crossunder } from './indicators.js';
 
 export function computeSignals(klines, CFG) {
     if (klines.length < CFG.LEN) {
@@ -48,3 +48,4 @@ export function computeSignals(klines, CFG) {
 
     return { buy: buySignal, sell: sellSignal };
 }
+
