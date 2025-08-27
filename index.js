@@ -3,8 +3,11 @@ import WebSocket from 'ws';
 import { getTurkishDateTime, sendTelegramMessage } from './utils.js';
 import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
+import express from 'express';
 
 const Binance = pkg.default;
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 dotenv.config();
 
@@ -136,3 +139,12 @@ async function startBot() {
 }
 
 startBot();
+
+// Render'ın uygulamayı sonlandırmasını önlemek için basit bir web sunucusu başlat
+app.get('/', (req, res) => {
+    res.send('Bot çalışıyor!');
+});
+
+app.listen(PORT, () => {
+    console.log(`✅ Sunucu http://localhost:${PORT} adresinde dinliyor`);
+});
