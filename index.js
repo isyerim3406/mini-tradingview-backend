@@ -3,8 +3,7 @@ import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
-import pkg from 'binance-api-node'; // Kütüphane varsayılan olarak içe aktarıldı
-const { binance } = pkg; // binance fonksiyonu paketten ayrıştırıldı
+import Binance from 'binance-api-node'; // ✅ Doğru import
 
 dotenv.config();
 
@@ -13,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 
 const CFG = {
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
-    INTERVAL: process.env.INTERVAL || '1m', 
+    INTERVAL: process.env.INTERVAL || '1m',
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     BINANCE_API_KEY: process.env.BINANCE_API_KEY,
@@ -21,14 +20,13 @@ const CFG = {
     TRADE_SIZE: 0.001
 };
 
-// Binance API istemcisini başlat
-const client = binance({
-  apiKey: CFG.BINANCE_API_KEY,
-  apiSecret: CFG.BINANCE_SECRET_KEY
+// ✅ Binance API istemcisini başlat
+const client = Binance({
+    apiKey: CFG.BINANCE_API_KEY,
+    apiSecret: CFG.BINANCE_SECRET_KEY,
 });
 
 let position = 'none';
-
 let klines = [];
 let lastTelegramMessage = '';
 
@@ -58,7 +56,7 @@ async function placeOrder(side, quantity, entryPrice) {
 
         console.log(`✅ Emir başarıyla gönderildi: ID: ${order.orderId}, Fiyat: ${order.avgPrice}`);
         position = side === 'BUY' ? 'long' : 'short';
-        
+
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${side === 'BUY' ? 'AL' : 'SAT'} emri verildi!`);
 
     } catch (error) {
@@ -90,7 +88,7 @@ async function fetchHistoricalData() {
 async function processData() {
     let lastNonNeutralSignal = null;
     let signalCount = 0;
-    
+
     if (klines.length < 27) {
         console.log("Geçmiş veri yetersiz, en az 27 bar gerekli.");
         return;
@@ -99,7 +97,7 @@ async function processData() {
     for (let i = 0; i < klines.length; i++) {
         const subKlines = klines.slice(0, i + 1);
         const signals = computeSignals(subKlines, CFG);
-        
+
         const barTime = new Date(klines[i].closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
         if (signals.buy) {
@@ -110,7 +108,7 @@ async function processData() {
             signalCount++;
         }
     }
-    
+
     console.log(`✅ Geçmiş veriler işlendi. Toplam Sinyal: ${signalCount}, Son Sinyal: ${lastNonNeutralSignal || 'Nötr'}`);
     sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu.`);
 }
@@ -139,17 +137,17 @@ ws.on('message', async (data) => {
             volume: parseFloat(kline.v),
             closeTime: kline.T
         };
-        
+
         klines.push(newBar);
         if (klines.length > 1000) {
             klines.shift();
         }
 
         const signals = computeSignals(klines, CFG);
-        
+
         const barIndex = klines.length - 1;
         const barTime = new Date(newBar.closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
-        
+
         console.log(`Yeni mum verisi alındı. Bar No: ${barIndex + 1}, Zaman: ${barTime}, Kapanış Fiyatı: ${newBar.close}`);
 
         if (signals.buy) {
