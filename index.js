@@ -72,16 +72,16 @@ async function processData() {
         const signals = computeSignals(subKlines, CFG);
 
         if (signals.buy) {
-            lastNonNeutralSignal = 'AL';
+            lastNonNeutralSignal = `AL (Bar: ${i + 1})`;
             signalCount++;
         } else if (signals.sell) {
-            lastNonNeutralSignal = 'SAT';
+            lastNonNeutralSignal = `SAT (Bar: ${i + 1})`;
             signalCount++;
         }
     }
     
     console.log(`✅ Geçmiş veriler işlendi. Toplam Sinyal: ${signalCount}, Son Sinyal: ${lastNonNeutralSignal || 'Nötr'}`);
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu.`);
+    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu. Son sinyal: ${lastNonNeutralSignal || 'Nötr'}`);
 }
 
 // WebSocket bağlantısı
@@ -120,12 +120,14 @@ ws.on('message', async (data) => {
         const time = new Date().toLocaleString();
         
         if (signals.buy && lastTelegramMessage !== 'buy') {
-            const message = `${time} - AL sinyali geldi! Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
+            const barIndex = klines.length - 1;
+            const message = `${time} - AL sinyali geldi! Bar No: ${barIndex + 1}, Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
             console.log(message);
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
             lastTelegramMessage = 'buy';
         } else if (signals.sell && lastTelegramMessage !== 'sell') {
-            const message = `${time} - SAT sinyali geldi! Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
+            const barIndex = klines.length - 1;
+            const message = `${time} - SAT sinyali geldi! Bar No: ${barIndex + 1}, Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
             console.log(message);
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
             lastTelegramMessage = 'sell';
