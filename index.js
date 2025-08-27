@@ -10,7 +10,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Binance API istemcisi
 const Binance = pkg.default;
 const CFG = {
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
@@ -86,7 +85,7 @@ async function fetchHistoricalData() {
     }
 }
 
-// Geçmiş verileri işle
+// Eski sinyal mantığı ile geçmiş verileri işle
 async function processData() {
     let lastNonNeutralSignal = null;
     let signalCount = 0;
