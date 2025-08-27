@@ -1,7 +1,7 @@
 {
-  "name": "ssl-hybrid-v3-bot",
+  "name": "bbmc-atr-bot",
   "version": "1.0.0",
-  "description": "SSL Hybrid V3 Strategy Trading Bot for Binance Futures",
+  "description": "BBMC+ATR Bands Strategy Trading Bot for Binance Futures",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -22,12 +22,9 @@
     "bot",
     "binance",
     "futures",
-    "ssl",
-    "hybrid"
+    "bbmc",
+    "atr"
   ],
   "author": "",
   "license": "ISC"
-}
-"engines": {
-  "node": "20.x"
 }
