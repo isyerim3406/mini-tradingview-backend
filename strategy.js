@@ -1,31 +1,35 @@
-import { calculateMACD } from './indicator.js';
+import { calculateSSLHybrid } from './indicator.js';
 
 export function computeSignals(klines, CFG) {
-    // Pine Script'teki varsayılan değerleri kullanıyoruz
-    const fastLength = 12;
-    const slowLength = 26;
-    const signalLength = 9;
+    // .env değerlerini al
+    const {
+        ENTRY_SIGNAL_TYPE,
+        LEN,
+        ATR_LEN,
+        ATR_SMOOTHING,
+        ATR_MULT,
+        MA_TYPE,
+        BASELINE_SOURCE,
+        KIDIV,
+        M_BARS_BUY,
+        N_BARS_SELL
+    } = CFG;
 
-    // MACD değerlerini hesapla
-    const macdData = calculateMACD(klines, fastLength, slowLength, signalLength);
+    // SSL Hybrid hesaplamasını yap
+    const sslData = calculateSSLHybrid(klines, {
+        entrySignalType: ENTRY_SIGNAL_TYPE,
+        len: parseInt(LEN),
+        atrLen: parseInt(ATR_LEN),
+        atrSmoothing: ATR_SMOOTHING,
+        atrMult: parseFloat(ATR_MULT),
+        maType: MA_TYPE,
+        baseSource: BASELINE_SOURCE,
+        kiDiv: parseInt(KIDIV),
+        mBarsBuy: parseInt(M_BARS_BUY),
+        nBarsSell: parseInt(N_BARS_SELL)
+    });
 
-    // Yeterli veri yoksa sinyal üretme
-    if (macdData.length < 2) {
-        return { buy: false, sell: false };
-    }
-
-    // Son ve bir önceki MACD ve Sinyal çizgisi değerlerini al
-    const lastBar = macdData[macdData.length - 1];
-    const prevBar = macdData[macdData.length - 2];
-
-    const macdLineLast = lastBar.MACD;
-    const signalLineLast = lastBar.signal;
-    const macdLinePrev = prevBar.MACD;
-    const signalLinePrev = prevBar.signal;
-    
-    // Alım ve Satım sinyalleri için kesişim kontrolü
-    const buySignal = (macdLinePrev <= signalLinePrev) && (macdLineLast > signalLineLast);
-    const sellSignal = (macdLinePrev >= signalLinePrev) && (macdLineLast < signalLineLast);
-
-    return { buy: buySignal, sell: sellSignal };
+    // Son bar sinyali
+    const last = sslData[sslData.length - 1] || {};
+    return { buy: !!last.buy, sell: !!last.sell };
 }
