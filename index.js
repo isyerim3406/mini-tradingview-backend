@@ -127,23 +127,23 @@ async function startBot() {
         }));
         console.log(`✅ ${klines.length} adet geçmiş mum verisi başarıyla yüklendi.`);
         
-        // Geçmiş veriyi işleyip son sinyali bul
+        let lastNonNeutralSignal = { type: 'Nötr', time: null };
+
+        // Geçmiş veriyi işleyip en son nötr olmayan sinyali bul
         for (let i = 0; i < klines.length; i++) {
             const tempKlines = klines.slice(0, i + 1);
-            lastSignal = computeSignals(tempKlines, CFG);
+            const signal = computeSignals(tempKlines, CFG);
+            
+            if (signal.buy) {
+                lastNonNeutralSignal = { type: 'AL', time: klines[i].closeTime };
+            } else if (signal.sell) {
+                lastNonNeutralSignal = { type: 'SAT', time: klines[i].closeTime };
+            }
         }
         
-        const lastBar = klines[klines.length - 1];
-        const lastBarTime = getTurkishDateTime(lastBar.closeTime);
+        const lastSignalTime = lastNonNeutralSignal.time ? getTurkishDateTime(lastNonNeutralSignal.time) : 'Belirtilmemiş';
 
-        let status = 'Nötr';
-        if (lastSignal.buy) {
-            status = 'AL';
-        } else if (lastSignal.sell) {
-            status = 'SAT';
-        }
-        
-        console.log(`✅ Geçmiş veriler işlendi. Son Sinyal: ${status} | Bar Zamanı: ${lastBarTime}`);
+        console.log(`✅ Geçmiş veriler işlendi. Son Sinyal: ${lastNonNeutralSignal.type} | Bar Zamanı: ${lastSignalTime}`);
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${getTurkishDateTime(new Date().getTime())} - Bot başarıyla başlatıldı. Geçmiş veriler yüklendi.`);
 
     } catch (error) {
