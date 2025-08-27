@@ -23,7 +23,7 @@ const CFG = {
 // ✅ Binance API istemcisini başlat
 const client = Binance({
     apiKey: CFG.BINANCE_API_KEY,
-    apiSecret: CFG.BINANCE_SECRET_KEY
+    apiSecret: CFG.BINANCE_SECRET_KEY,
 });
 
 let position = 'none';
