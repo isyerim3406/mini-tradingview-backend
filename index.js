@@ -3,6 +3,7 @@ import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
+import binance from 'binance-api-node';
 
 dotenv.config();
 
@@ -14,11 +15,24 @@ const CFG = {
     INTERVAL: process.env.INTERVAL || '1m', 
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
+    BINANCE_API_KEY: process.env.BINANCE_API_KEY,
+    BINANCE_SECRET_KEY: process.env.BINANCE_SECRET_KEY,
+    TRADE_SIZE: 0.001 // İşlem yapacağın miktar (Örn: 0.001 ETH)
 };
+
+// Binance API istemcisini başlat
+const client = binance({
+  apiKey: CFG.BINANCE_API_KEY,
+  apiSecret: CFG.BINANCE_SECRET_KEY
+});
+
+// Pozisyon takibi: 'none', 'long', 'short'
+let position = 'none';
 
 let klines = [];
 let lastTelegramMessage = '';
 
+// Yardımcı fonksiyon: Telegram mesajı gönderme
 async function sendTelegramMessage(token, chatId, message) {
     if (!token || !chatId) return;
     try {
@@ -33,6 +47,29 @@ async function sendTelegramMessage(token, chatId, message) {
     }
 }
 
+// Emir gönderme fonksiyonu
+async function placeOrder(side, quantity, entryPrice) {
+    try {
+        console.log(`🤖 Emir veriliyor: ${side} ${quantity} ${CFG.SYMBOL}`);
+        const order = await client.futuresOrder({
+            symbol: CFG.SYMBOL,
+            side: side.toUpperCase(),
+            type: 'MARKET', // Piyasa emri
+            quantity: quantity
+        });
+
+        console.log(`✅ Emir başarıyla gönderildi: ID: ${order.orderId}, Fiyat: ${order.avgPrice}`);
+        position = side === 'BUY' ? 'long' : 'short';
+        
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${side === 'BUY' ? 'AL' : 'SAT'} emri verildi!`);
+
+    } catch (error) {
+        console.error('❌ Emir gönderilirken hata oluştu:', error.body);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `❌ Emir hatası: ${error.message}`);
+    }
+}
+
+// Geçmiş veriyi çekme fonksiyonu
 async function fetchHistoricalData() {
     console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
     try {
@@ -53,6 +90,7 @@ async function fetchHistoricalData() {
     }
 }
 
+// Sinyal hesaplaması ve işlem fonksiyonu
 async function processData() {
     let lastNonNeutralSignal = null;
     let signalCount = 0;
@@ -66,7 +104,6 @@ async function processData() {
         const subKlines = klines.slice(0, i + 1);
         const signals = computeSignals(subKlines, CFG);
         
-        // Bar zamanını yerel saat dilimine göre doğru formatla
         const barTime = new Date(klines[i].closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
 
         if (signals.buy) {
@@ -82,6 +119,7 @@ async function processData() {
     sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu.`);
 }
 
+// WebSocket bağlantısı
 const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
 ws.on('open', () => {
@@ -97,7 +135,6 @@ ws.on('message', async (data) => {
     const klineData = JSON.parse(data.toString());
     const kline = klineData.k;
 
-    // Her mum kapanışında log mesajı yazdır
     if (kline.x) {
         const newBar = {
             open: parseFloat(kline.o),
@@ -116,10 +153,8 @@ ws.on('message', async (data) => {
         const signals = computeSignals(klines, CFG);
         
         const barIndex = klines.length - 1;
-        // Bar zamanını yerel saat dilimine göre doğru formatla
         const barTime = new Date(newBar.closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
         
-        // Her yeni mum kapandığında bu log mesajı görünecek
         console.log(`Yeni mum verisi alındı. Bar No: ${barIndex + 1}, Zaman: ${barTime}, Kapanış Fiyatı: ${newBar.close}`);
 
         if (signals.buy) {
@@ -127,10 +162,18 @@ ws.on('message', async (data) => {
                 sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `AL sinyali geldi!`);
                 lastTelegramMessage = 'buy';
             }
+            // Sadece bir pozisyonda değilken veya short pozisyondayken alım emri ver
+            if (position === 'none' || position === 'short') {
+                placeOrder('BUY', CFG.TRADE_SIZE, newBar.close);
+            }
         } else if (signals.sell) {
             if (lastTelegramMessage !== 'sell') {
                 sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `SAT sinyali geldi!`);
                 lastTelegramMessage = 'sell';
+            }
+            // Sadece bir pozisyonda değilken veya long pozisyondayken satım emri ver
+            if (position === 'none' || position === 'long') {
+                placeOrder('SELL', CFG.TRADE_SIZE, newBar.close);
             }
         } else {
             // Sinyal yoksa Telegram durumunu sıfırla
