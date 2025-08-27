@@ -1,20 +1,29 @@
-import { movingAverage, atr, ssl1, crossover, crossunder } from './indicators.js';
+import { movingAverage, atr, ssl1, crossover, crossunder } from './indicator.js';
 
 export function computeSignals(klines, CFG) {
     if (klines.length < CFG.LEN) {
         return { buy: false, sell: false };
     }
-    
+
+    // Baseline kaynağı seçimi
+    const sourcePrices = klines.map(k => {
+        switch (CFG.BASELINE_SOURCE) {
+            case 'open': return k.open;
+            case 'high': return k.high;
+            case 'low': return k.low;
+            default: return k.close;
+        }
+    });
+
     const closePrices = klines.map(k => k.close);
     const lastClose = closePrices[closePrices.length - 1];
-    
-    // BBMC+ATR için temel çizgiler
-    const baseline = movingAverage(closePrices, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
+
+    const baseline = movingAverage(sourcePrices, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
     const atrValue = atr(klines, CFG.ATR_LEN, CFG.ATR_SMOOTHING);
+
     const bbmcUpperATR = baseline + atrValue * CFG.ATR_MULT;
     const bbmcLowerATR = baseline - atrValue * CFG.ATR_MULT;
 
-    // SSL1 çizgisi
     const ssl1Result = ssl1(klines, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
     const ssl1Line = ssl1Result.ssl1Line;
 
@@ -22,15 +31,12 @@ export function computeSignals(klines, CFG) {
     let sellSignal = false;
 
     if (CFG.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
-        // Ardışık kapanışları kontrol et
         const consecutiveClosesAbove = closePrices.slice(-CFG.M_BARS_BUY).every(c => c > bbmcUpperATR);
         const consecutiveClosesBelow = closePrices.slice(-CFG.N_BARS_SELL).every(c => c < bbmcLowerATR);
 
         if (consecutiveClosesAbove) buySignal = true;
         if (consecutiveClosesBelow) sellSignal = true;
-
     } else if (CFG.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
-        // SSL1 crossover/crossunder kontrolü (sadece kapanış fiyatları)
         if (closePrices.length < 2) return { buy: false, sell: false };
 
         const prevClose = closePrices[closePrices.length - 2];
@@ -39,6 +45,6 @@ export function computeSignals(klines, CFG) {
         if (crossover([prevClose, lastClose], [prevSsl1, ssl1Line])) buySignal = true;
         if (crossunder([prevClose, lastClose], [prevSsl1, ssl1Line])) sellSignal = true;
     }
-    
+
     return { buy: buySignal, sell: sellSignal };
 }
