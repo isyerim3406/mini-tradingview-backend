@@ -1,5 +1,4 @@
 import pkg from 'binance-api-node';
-import WebSocket from 'ws';
 import { getTurkishDateTime, sendTelegramMessage } from './utils.js';
 import { computeSignals } from './strategy.js';
 import dotenv from 'dotenv';
@@ -44,40 +43,15 @@ const binance = Binance({
 let klines = [];
 let lastSignal = { buy: false, sell: false };
 
-// Telegram mesaj ve log
-function trade(signal) {
-    const time = getTurkishDateTime(new Date().getTime());
-
-    if (signal.buy) {
-        const message = `${time} - AL SİNYALİ GELDİ! Sembol: ${CFG.SYMBOL}, Fiyat: ${klines[klines.length - 1].close.toFixed(2)}`;
-        console.log(`✅ Telegram'a gönderiliyor: ${message}`);
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
-    } else if (signal.sell) {
-        const message = `${time} - SAT SİNYALİ GELDİ! Sembol: ${CFG.SYMBOL}, Fiyat: ${klines[klines.length - 1].close.toFixed(2)}`;
-        console.log(`✅ Telegram'a gönderiliyor: ${message}`);
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
-    }
-}
-
-// Sinyal kontrol
-async function checkSignals() {
-    const newSignal = computeSignals(klines, CFG);
-
-    if (newSignal.buy && !lastSignal.buy) {
-        trade({ buy: true, sell: false });
-    }
-    if (newSignal.sell && !lastSignal.sell) {
-        trade({ buy: false, sell: true });
-    }
-
-    lastSignal = newSignal;
-}
-
-// Bot başlatma ve geçmiş veri yükleme
-async function startBot() {
-    console.log(`Geçmiş veri çekiliyor: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
+// Botu başlatmadan önce geçmiş veriyi işleyip son sinyali logla
+async function analyzeHistoricalData() {
     try {
-        const historicalData = await binance.futuresCandles({ symbol: CFG.SYMBOL, interval: CFG.INTERVAL, limit: 1000 });
+        const historicalData = await binance.futuresCandles({
+            symbol: CFG.SYMBOL,
+            interval: CFG.INTERVAL,
+            limit: 1000
+        });
+
         klines = historicalData.map(d => ({
             open: parseFloat(d.open),
             high: parseFloat(d.high),
@@ -86,37 +60,36 @@ async function startBot() {
             volume: parseFloat(d.volume),
             closeTime: d.closeTime
         }));
-        console.log(`✅ ${klines.length} adet geçmiş mum verisi başarıyla yüklendi.`);
 
-        // Son nötr olmayan sinyali tespit et
         let lastNonNeutralSignal = { type: 'Nötr', barIndex: null, time: null };
+
         for (let i = 0; i < klines.length; i++) {
             const tempKlines = klines.slice(0, i + 1);
             const signal = computeSignals(tempKlines, CFG);
 
             if (signal.buy) {
-                lastNonNeutralSignal = { type: 'AL', barIndex: i, time: klines[i].closeTime };
+                lastNonNeutralSignal = { type: 'AL', barIndex: i, time: tempKlines[i].closeTime };
             } else if (signal.sell) {
-                lastNonNeutralSignal = { type: 'SAT', barIndex: i, time: klines[i].closeTime };
+                lastNonNeutralSignal = { type: 'SAT', barIndex: i, time: tempKlines[i].closeTime };
             }
         }
 
-        // Render log’a yazdır
-        if (lastNonNeutralSignal.type !== 'Nötr') {
-            console.log(`✅ Geçmiş verilerle son sinyal: ${lastNonNeutralSignal.type} | Bar indeksi: ${lastNonNeutralSignal.barIndex} | Zaman: ${new Date(lastNonNeutralSignal.time).toLocaleString()}`);
+        if (lastNonNeutralSignal.type === 'Nötr') {
+            console.log("⛔ Geçmiş 1000 bar veride sinyal oluşmamış.");
         } else {
-            console.log(`⚠️ Geçmiş 1000 bar veride sinyal oluşmamış.`);
+            console.log(`✅ Geçmiş veride son sinyal: ${lastNonNeutralSignal.type}`);
+            console.log(`📊 Bar Index: ${lastNonNeutralSignal.barIndex}`);
+            console.log(`⏰ Bar Zamanı: ${getTurkishDateTime(lastNonNeutralSignal.time)}`);
         }
 
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `${new Date().toLocaleString()} - Bot başarıyla başlatıldı. Geçmiş veriler işlendi, son sinyal: ${lastNonNeutralSignal.type}`);
-
     } catch (error) {
-        console.error('❌ Geçmiş veri çekilirken hata oluştu:', error.message);
-        console.log('Geçmiş veri çekilemedi, bot canlı akışla başlayacak...');
-        klines = [];
+        console.error('❌ Geçmiş veri analizinde hata oluştu:', error.message);
     }
+}
 
-    // WebSocket bağlantısı
+// WebSocket ile canlı sinyal takibi
+function startLiveBot() {
+    const WebSocket = require('ws');
     const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
     ws.on('open', () => console.log('✅ WebSocket connected'));
@@ -125,7 +98,7 @@ async function startBot() {
         const klineData = JSON.parse(data.toString());
         const kline = klineData.k;
 
-        if (kline.x) {
+        if (kline.x) { 
             klines.push({
                 open: parseFloat(kline.o),
                 high: parseFloat(kline.h),
@@ -135,22 +108,34 @@ async function startBot() {
                 closeTime: kline.T
             });
 
-            if (klines.length > 2000) klines = klines.slice(klines.length - 1000);
+            if (klines.length > 2000) klines = klines.slice(-1000);
 
-            await checkSignals();
+            const newSignal = computeSignals(klines, CFG);
+            if (newSignal.buy && !lastSignal.buy) {
+                console.log(`${getTurkishDateTime(new Date().getTime())} - AL SİNYALİ GELDİ! Fiyat: ${klines[klines.length - 1].close}`);
+            }
+            if (newSignal.sell && !lastSignal.sell) {
+                console.log(`${getTurkishDateTime(new Date().getTime())} - SAT SİNYALİ GELDİ! Fiyat: ${klines[klines.length - 1].close}`);
+            }
+
+            lastSignal = newSignal;
         }
     });
 
-    ws.on('close', (code, reason) => {
-        console.log(`❌ WebSocket bağlantısı kesildi. Kod: ${code}, Neden: ${reason.toString()}`);
-        console.log('Yeniden bağlanılıyor...');
-        setTimeout(startBot, 5000);
+    ws.on('close', () => {
+        console.log('❌ WebSocket bağlantısı kesildi, yeniden bağlanıyor...');
+        setTimeout(startLiveBot, 5000);
     });
 
-    ws.on('error', (error) => console.error('❌ WebSocket hatası:', error.message));
+    ws.on('error', (err) => console.error('❌ WebSocket hatası:', err.message));
 }
 
-// Render'ın uygulamayı sonlandırmasını önlemek için basit bir web sunucusu
+async function startBot() {
+    await analyzeHistoricalData();
+    startLiveBot();
+}
+
+// Web sunucusu
 app.get('/', (req, res) => res.send('Bot çalışıyor!'));
 app.listen(PORT, () => console.log(`✅ Sunucu http://localhost:${PORT} adresinde dinliyor`));
 
