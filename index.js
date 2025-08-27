@@ -57,12 +57,10 @@ async function fetchHistoricalData() {
 
 // Sinyal hesaplaması ve işlem fonksiyonu
 async function processData() {
-    // Geçmiş verileri bar bar işleyerek strateji durumunu güncel tut
     let lastNonNeutralSignal = null;
     let signalCount = 0;
     
-    // Yeterli bar yoksa işlemi durdur
-    if (klines.length < 27) { // 26 (slowMA) + 1 (ilk bar)
+    if (klines.length < 27) {
         console.log("Geçmiş veri yetersiz, en az 27 bar gerekli.");
         return;
     }
@@ -70,18 +68,19 @@ async function processData() {
     for (let i = 0; i < klines.length; i++) {
         const subKlines = klines.slice(0, i + 1);
         const signals = computeSignals(subKlines, CFG);
+        const barTime = new Date(klines[i].closeTime).toLocaleString();
 
         if (signals.buy) {
-            lastNonNeutralSignal = `AL (Bar: ${i + 1})`;
+            lastNonNeutralSignal = `AL (Bar: ${i + 1}, Zaman: ${barTime})`;
             signalCount++;
         } else if (signals.sell) {
-            lastNonNeutralSignal = `SAT (Bar: ${i + 1})`;
+            lastNonNeutralSignal = `SAT (Bar: ${i + 1}, Zaman: ${barTime})`;
             signalCount++;
         }
     }
     
     console.log(`✅ Geçmiş veriler işlendi. Toplam Sinyal: ${signalCount}, Son Sinyal: ${lastNonNeutralSignal || 'Nötr'}`);
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu. Son sinyal: ${lastNonNeutralSignal || 'Nötr'}`);
+    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot başarıyla başlatıldı. Geçmiş veriler yüklendi. Toplam ${signalCount} sinyal bulundu.`);
 }
 
 // WebSocket bağlantısı
@@ -117,20 +116,28 @@ ws.on('message', async (data) => {
 
         const signals = computeSignals(klines, CFG);
         
-        const time = new Date().toLocaleString();
+        const barIndex = klines.length - 1;
+        const barTime = new Date(newBar.closeTime).toLocaleString();
         
-        if (signals.buy && lastTelegramMessage !== 'buy') {
-            const barIndex = klines.length - 1;
-            const message = `${time} - AL sinyali geldi! Bar No: ${barIndex + 1}, Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
-            console.log(message);
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
-            lastTelegramMessage = 'buy';
-        } else if (signals.sell && lastTelegramMessage !== 'sell') {
-            const barIndex = klines.length - 1;
-            const message = `${time} - SAT sinyali geldi! Bar No: ${barIndex + 1}, Sembol: ${CFG.SYMBOL}, Periyot: ${CFG.INTERVAL}, Fiyat: ${newBar.close}`;
-            console.log(message);
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
-            lastTelegramMessage = 'sell';
+        if (signals.buy) {
+            const logMessage = `AL sinyali geldi! Bar No: ${barIndex + 1}, Zaman: ${barTime}, Fiyat: ${newBar.close}`;
+            console.log(logMessage);
+            
+            if (lastTelegramMessage !== 'buy') {
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `AL sinyali geldi!`);
+                lastTelegramMessage = 'buy';
+            }
+        } else if (signals.sell) {
+            const logMessage = `SAT sinyali geldi! Bar No: ${barIndex + 1}, Zaman: ${barTime}, Fiyat: ${newBar.close}`;
+            console.log(logMessage);
+            
+            if (lastTelegramMessage !== 'sell') {
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `SAT sinyali geldi!`);
+                lastTelegramMessage = 'sell';
+            }
+        } else {
+            // Sinyal yoksa Telegram durumunu sıfırla
+            lastTelegramMessage = '';
         }
     }
 });
