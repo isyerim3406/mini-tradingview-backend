@@ -1,7 +1,7 @@
 {
-  "name": "macd-crossover-bot",
+  "name": "ssl-hybrid-v3-bot",
   "version": "1.0.0",
-  "description": "MACD Crossover Strategy Trading Bot for Binance Futures",
+  "description": "SSL Hybrid V3 Strategy Trading Bot for Binance Futures",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -22,7 +22,8 @@
     "bot",
     "binance",
     "futures",
-    "macd"
+    "ssl",
+    "hybrid"
   ],
   "author": "",
   "license": "ISC"
