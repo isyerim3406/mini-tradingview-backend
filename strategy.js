@@ -20,16 +20,35 @@ export function computeSignals(klines, CFG) {
     let buySignal = false;
     let sellSignal = false;
 
-    if (CFG.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
-        const consecutiveClosesAbove = closePrices.slice(-CFG.M_BARS_BUY).every(c => c > bbmcUpperATR);
-        const consecutiveClosesBelow = closePrices.slice(-CFG.N_BARS_SELL).every(c => c < bbmcLowerATR);
+if (CFG.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
+    // Son kapanış üst ATR bant altında mı? Son kaç bar geçti
+    let barsSinceBelowUpper = 0;
+    for (let i = closePrices.length - 1; i >= 0; i--) {
+        if (closePrices[i] < bbmcUpperATR) break;
+        barsSinceBelowUpper++;
+    }
 
-        if (consecutiveClosesAbove) {
-            buySignal = true;
-        }
-        if (consecutiveClosesBelow) {
-            sellSignal = true;
-        }
+    let barsSinceAboveLower = 0;
+    for (let i = closePrices.length - 1; i >= 0; i--) {
+        if (closePrices[i] > bbmcLowerATR) break;
+        barsSinceAboveLower++;
+    }
+
+    buySignal  = barsSinceBelowUpper >= CFG.M_BARS_BUY;
+    sellSignal = barsSinceAboveLower >= CFG.N_BARS_SELL;
+
+} else if (CFG.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
+    const prevClose = closePrices[closePrices.length - 2];
+    const prevSsl1 = ssl1(klines.slice(0, -1), CFG.LEN, CFG.MA_TYPE, CFG.KIDIV).ssl1Line;
+    
+    if (crossover([prevClose, lastClose], [prevSsl1, ssl1Line])) {
+        buySignal = true;
+    }
+    if (crossunder([prevClose, lastClose], [prevSsl1, ssl1Line])) {
+        sellSignal = true;
+    }
+}
+
     } else if (CFG.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
         const prevClose = closePrices[closePrices.length - 2];
         const prevSsl1 = ssl1(klines.slice(0, -1), CFG.LEN, CFG.MA_TYPE, CFG.KIDIV).ssl1Line;
@@ -44,3 +63,4 @@ export function computeSignals(klines, CFG) {
     
     return { buy: buySignal, sell: sellSignal };
 }
+
