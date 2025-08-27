@@ -1,3 +1,4 @@
+import WebSocket from 'ws';
 import pkg from 'binance-api-node';
 import { getTurkishDateTime, sendTelegramMessage } from './utils.js';
 import { computeSignals } from './strategy.js';
@@ -140,3 +141,4 @@ app.get('/', (req, res) => res.send('Bot çalışıyor!'));
 app.listen(PORT, () => console.log(`✅ Sunucu http://localhost:${PORT} adresinde dinliyor`));
 
 startBot();
+
