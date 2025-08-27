@@ -1,9 +1,7 @@
 import pkg from 'binance-api-node';
-import WebSocket from 'ws';
-import dotenv from 'dotenv';
-import express from 'express';
 import { getTurkishDateTime, sendTelegramMessage } from './utils.js';
 import { computeSignals } from './strategy.js';
+import dotenv from 'dotenv';
 
 dotenv.config();
 const Binance = pkg.default;
@@ -21,63 +19,108 @@ const CFG = {
     ATR_SMOOTHING: process.env.ATR_SMOOTHING,
     ATR_MULT: parseFloat(process.env.ATR_MULT),
     MA_TYPE: process.env.MA_TYPE,
-    BASELINE_SOURCE: process.env.BASELINE_SOURCE || 'close',
+    BASELINE_SOURCE: process.env.BASELINE_SOURCE,
     KIDIV: parseInt(process.env.KIDIV),
     M_BARS_BUY: parseInt(process.env.M_BARS_BUY),
-    N_BARS_SELL: parseInt(process.env.N_BARS_SELL)
+    N_BARS_SELL: parseInt(process.env.N_BARS_SELL),
 };
 
-const binance = Binance({ apiKey: CFG.API_KEY, apiSecret: CFG.API_SECRET });
-const app = express();
+const binance = Binance({
+    apiKey: CFG.API_KEY,
+    apiSecret: CFG.API_SECRET,
+});
+
 let klines = [];
 
-async function startBot() {
-    // 1️⃣ Geçmiş 1000 bar
-    const historicalData = await binance.futuresCandles({ symbol: CFG.SYMBOL, interval: CFG.INTERVAL, limit: 1000 });
-    klines = historicalData.map(d => ({
-        open: parseFloat(d.open),
-        high: parseFloat(d.high),
-        low: parseFloat(d.low),
-        close: parseFloat(d.close),
-        volume: parseFloat(d.volume),
-        closeTime: d.closeTime
-    }));
+async function fetchHistoricalData() {
+    try {
+        const historicalData = await binance.futuresCandles({
+            symbol: CFG.SYMBOL,
+            interval: CFG.INTERVAL,
+            limit: 1000
+        });
 
-    // 2️⃣ Son sinyali bul
-    let lastSignal = { type: 'Nötr', time: null };
-    for (let i = 0; i < klines.length; i++) {
-        const tempKlines = klines.slice(0, i + 1);
-        const signal = computeSignals(tempKlines, CFG);
-        if (signal.buy) lastSignal = { type: 'AL', time: klines[i].closeTime };
-        if (signal.sell) lastSignal = { type: 'SAT', time: klines[i].closeTime };
-    }
+        klines = historicalData.map(d => ({
+            open: parseFloat(d.open),
+            high: parseFloat(d.high),
+            low: parseFloat(d.low),
+            close: parseFloat(d.close),
+            volume: parseFloat(d.volume),
+            closeTime: d.closeTime
+        }));
 
-    if (lastSignal.type === 'Nötr') console.log('⛔ Geçmiş 1000 bar veride sinyal oluşmamış.');
-    else console.log(`✅ Son sinyal: ${lastSignal.type} | Bar zamanı: ${getTurkishDateTime(lastSignal.time)}`);
+        console.log(`✅ ${klines.length} adet geçmiş mum verisi yüklendi.`);
 
-    // 3️⃣ Canlı WebSocket başlat
-    const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
-    ws.on('message', async (data) => {
-        const klineData = JSON.parse(data.toString()).k;
-        if (klineData.x) {
-            klines.push({
-                open: parseFloat(klineData.o),
-                high: parseFloat(klineData.h),
-                low: parseFloat(klineData.l),
-                close: parseFloat(klineData.c),
-                volume: parseFloat(klineData.v),
-                closeTime: klineData.T
-            });
-            if (klines.length > 2000) klines = klines.slice(-1000);
-            const signal = computeSignals(klines, CFG);
-            if (signal.buy) console.log(`AL sinyali! Fiyat: ${klines.at(-1).close}`);
-            if (signal.sell) console.log(`SAT sinyali! Fiyat: ${klines.at(-1).close}`);
+        // Geçmiş veride son sinyali bul
+        let lastSignal = { type: 'Nötr', index: null, price: null };
+        for (let i = 0; i < klines.length; i++) {
+            const tempKlines = klines.slice(0, i + 1);
+            const signal = computeSignals(tempKlines, CFG);
+
+            if (signal.buy) {
+                lastSignal = { type: 'AL', index: i, price: tempKlines[i].close };
+            } else if (signal.sell) {
+                lastSignal = { type: 'SAT', index: i, price: tempKlines[i].close };
+            }
         }
-    });
+
+        if (lastSignal.type === 'Nötr') {
+            console.log('⛔ Geçmiş 1000 bar veride sinyal oluşmamış.');
+        } else {
+            console.log(`✅ Son sinyal: ${lastSignal.type} | Bar indeksi: ${lastSignal.index} | Fiyat: ${lastSignal.price}`);
+        }
+
+    } catch (error) {
+        console.error('❌ Geçmiş veri çekilirken hata:', error.message);
+    }
 }
 
-startBot();
+async function startLiveBot() {
+    const WebSocket = (await import('ws')).default;
+    const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
-// Basit sunucu
-app.get('/', (req, res) => res.send('Bot çalışıyor!'));
-app.listen(process.env.PORT || 3000, () => console.log(`✅ Sunucu http://localhost:${process.env.PORT || 3000} adresinde dinliyor`));
+    ws.on('open', () => console.log('✅ WebSocket connected'));
+
+    ws.on('message', async (data) => {
+        const klineData = JSON.parse(data.toString());
+        const kline = klineData.k;
+
+        if (kline.x) {
+            klines.push({
+                open: parseFloat(kline.o),
+                high: parseFloat(kline.h),
+                low: parseFloat(kline.l),
+                close: parseFloat(kline.c),
+                volume: parseFloat(kline.v),
+                closeTime: kline.T
+            });
+
+            if (klines.length > 2000) klines = klines.slice(klines.length - 1000);
+
+            const signal = computeSignals(klines, CFG);
+            const time = getTurkishDateTime(new Date().getTime());
+
+            if (signal.buy) {
+                const message = `${time} - AL SİNYALİ! Fiyat: ${klines[klines.length-1].close.toFixed(2)}`;
+                console.log(message);
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
+            } else if (signal.sell) {
+                const message = `${time} - SAT SİNYALİ! Fiyat: ${klines[klines.length-1].close.toFixed(2)}`;
+                console.log(message);
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, message);
+            }
+        }
+    });
+
+    ws.on('close', () => {
+        console.log('❌ WebSocket kapandı, yeniden bağlanılıyor...');
+        setTimeout(startLiveBot, 5000);
+    });
+
+    ws.on('error', (err) => console.error('❌ WebSocket hatası:', err.message));
+}
+
+(async () => {
+    await fetchHistoricalData();
+    await startLiveBot();
+})();
