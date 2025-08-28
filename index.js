@@ -69,14 +69,42 @@ async function sendTelegramMessage(token, chatId, message) {
     }
 }
 
-async function placeOrder(side, quantity, message) {
+async function getFuturesBalance(symbol) {
     try {
+        const balances = await client.futuresAccountBalance();
+        const asset = balances.find(b => b.asset === symbol);
+        if (asset) {
+            return parseFloat(asset.availableBalance);
+        }
+        return 0;
+    } catch (error) {
+        console.error('❌ Error fetching balance:', error.body);
+        return 0;
+    }
+}
+
+async function placeOrder(side, message) {
+    try {
+        // Fetch available balance dynamically
+        const balance = await getFuturesBalance('USDT'); // Assuming USDT as base currency
+        if (balance <= 0) {
+            console.log('❌ Insufficient balance to place order.');
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `❌ Emir verilemedi: Yetersiz bakiye.`);
+            return;
+        }
+
+        // Use the entire available balance for the trade
+        // Note: The quantity needs to be calculated based on the price of the asset
+        // This is a simplified example, you may need to handle lot size and precision
+        const marketPrice = klines.at(-1).close;
+        const quantity = balance / marketPrice;
+
         console.log(`🤖 Placing order: ${side} ${quantity} ${CFG.SYMBOL} - Message: ${message}`);
         const order = await client.futuresOrder({
             symbol: CFG.SYMBOL,
             side: side.toUpperCase(),
             type: 'MARKET',
-            quantity: quantity
+            quantity: quantity,
         });
 
         console.log(`✅ Order placed successfully: ID: ${order.orderId}, Price: ${order.avgPrice}`);
@@ -227,19 +255,19 @@ ws.on('message', async (data) => {
                 case 'buy':
                 case 'flip_long':
                     if (position === 'none' || position === 'short') {
-                        placeOrder('BUY', CFG.TRADE_SIZE, signal.message);
+                        placeOrder('BUY', signal.message);
                     }
                     break;
                 case 'sell':
                 case 'flip_short':
                     if (position === 'none' || position === 'long') {
-                        placeOrder('SELL', CFG.TRADE_SIZE, signal.message);
+                        placeOrder('SELL', signal.message);
                     }
                     break;
                 case 'close':
                     if (position !== 'none') {
                         // Close position based on current position
-                        placeOrder(position === 'long' ? 'SELL' : 'BUY', CFG.TRADE_SIZE, signal.message);
+                        placeOrder(position === 'long' ? 'SELL' : 'BUY', signal.message);
                     }
                     break;
             }
