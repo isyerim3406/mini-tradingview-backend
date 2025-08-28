@@ -210,8 +210,8 @@ class SSLHybridStrategy {
         const signals = [];
         // Simulate trading bar by bar
         for (let i = 0; i < this.klines.length; i++) {
-            // computeSignals'a tüm geçmiş veriyi vermemize gerek yok,
-            // sınıfın kendisi zaten tüm veriyi tutuyor.
+            // No need to pass all historical data to computeSignals,
+            // the class itself holds the necessary data.
             const signal = this.computeSignals();
             if (signal.type !== 'none') {
                 signals.push({
@@ -230,15 +230,18 @@ class SSLHybridStrategy {
 // MAIN BOT LOGIC
 // =========================================================================================
 let client = null;
+let isSimulationMode = false;
 // Check if API keys are provided and not just empty strings
 if (CFG.BINANCE_API_KEY && CFG.BINANCE_SECRET_KEY && CFG.BINANCE_API_KEY.trim().length > 0 && CFG.BINANCE_SECRET_KEY.trim().length > 0) {
     client = Binance({
         apiKey: CFG.BINANCE_API_KEY,
         apiSecret: CFG.BINANCE_SECRET_KEY,
     });
-    console.log("Binance client initialized with provided API keys.");
+    console.log("Binance client initialized with provided API keys. Bot will run in live mode.");
+    isSimulationMode = false;
 } else {
     console.log("No valid Binance API keys found. Bot will run in simulation mode.");
+    isSimulationMode = true;
 }
 
 
@@ -262,7 +265,7 @@ async function sendTelegramMessage(token, chatId, message) {
 }
 
 async function getBalance() {
-    if (!client) {
+    if (isSimulationMode) {
         console.log('Bot is in simulation mode. Skipping balance check.');
         return 1000; // Default balance for simulation
     }
@@ -279,8 +282,12 @@ async function getBalance() {
 }
 
 async function placeOrder(side, message) {
-    if (!client) {
-        console.log(`Bot is in simulation mode. Detected signal: ${message}`);
+    const intendedPosition = side === 'BUY' ? 'long' : (side === 'SELL' ? 'short' : 'none');
+
+    if (isSimulationMode) {
+        console.log(`Bot is in simulation mode. Simulated order: ${side} - Message: ${message}`);
+        botCurrentPosition = intendedPosition;
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Simulated Order: ${side}`);
         return;
     }
     
@@ -291,6 +298,7 @@ async function placeOrder(side, message) {
             const lastBar = klines.at(-1);
             if (!lastBar) {
                 console.error("No recent bar data to calculate trade size.");
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: No recent bar data.');
                 return;
             }
             const symbolPrice = lastBar.close;
@@ -304,30 +312,24 @@ async function placeOrder(side, message) {
 
             if (quantity <= 0) {
                 console.error("Calculated quantity is zero or less. Not placing order.");
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: Calculated quantity is zero or less.');
                 return;
             }
 
-            console.log(`Simulating real order placement: ${side} - Quantity: ${quantity} - Message: ${message}`);
+            console.log(`Attempting real order placement: ${side} - Quantity: ${quantity} - Message: ${message}`);
             
             // The actual Binance API call should be made here
             // const orderResponse = await client.futuresOrder(...)
 
-            // Simulating a successful position update
-            if (side === 'BUY') {
-                botCurrentPosition = 'long';
-            } else if (side === 'SELL') {
-                botCurrentPosition = 'short';
-            } else {
-                botCurrentPosition = 'none';
-            }
-
+            // Update bot position state on successful attempt
+            botCurrentPosition = intendedPosition;
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Order placed: ${side} ${quantity.toFixed(4)} ${CFG.SYMBOL}`);
         } else {
             console.log('Insufficient balance to place an order.');
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: Insufficient balance.');
         }
     } catch (error) {
-        console.error('Error placing order:', error.body);
+        console.error('Error placing order:', error.message);
         sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `❌ Order Error: ${error.message}`);
     }
 }
