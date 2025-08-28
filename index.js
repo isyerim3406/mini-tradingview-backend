@@ -28,7 +28,7 @@ const CFG = {
     ENTRY_SIGNAL_TYPE: 'BBMC+ATR Bands',
     M_BARS_BUY: 1,
     N_BARS_SELL: 3,
-    TRADE_SIZE_PERCENT: 100, // New configuration for 100% of balance
+    TRADE_SIZE_PERCENT: 100,
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
     INTERVAL: process.env.INTERVAL || '1m',
     TG_TOKEN: process.env.TG_TOKEN,
@@ -80,8 +80,7 @@ const ssl1 = (klines, length, maType) => {
 };
 
 // =========================================================================================
-// STRATEGY CLASS - EXACTLY as in 3.html
-// This class holds the state for backtesting and live trading.
+// STRATEGY CLASS - Bu sınıf, pozisyon ve ardışık mum sayısı gibi durumu yönetir.
 // =========================================================================================
 class SSLHybridStrategy {
     constructor(initialKlines, params) {
@@ -128,12 +127,12 @@ class SSLHybridStrategy {
         if (this.currentPosition === 'long' && this.params.USE_STOPLOSS_AL && this.longEntryPrice !== null) {
             const stopLossPrice = this.longEntryPrice * (1 - this.params.STOPLOSS_AL_PERCENT / 100);
             if (currentBarIndex >= this.longEntryBarIndex + this.params.STOPLOSS_AL_ACTIVATION_BARS && lastBar.close <= stopLossPrice) {
-                return { type: 'close', message: `POZİSYON KAPAT: Uzun SL (${this.params.STOPLOSS_AL_PERCENT}% düşüş)` };
+                return { type: 'close', message: `POZISYON KAPAT: Uzun SL (${this.params.STOPLOSS_AL_PERCENT}% düşüş)` };
             }
         } else if (this.currentPosition === 'short' && this.params.USE_STOPLOSS_SAT && this.shortEntryPrice !== null) {
             const stopLossPrice = this.shortEntryPrice * (1 + this.params.STOPLOSS_SAT_PERCENT / 100);
             if (currentBarIndex >= this.shortEntryBarIndex + this.params.STOPLOSS_SAT_ACTIVATION_BARS && lastBar.close >= stopLossPrice) {
-                return { type: 'close', message: `POZİSYON KAPAT: Kısa SL (${this.params.STOPLOSS_SAT_PERCENT}% yükseliş)` };
+                return { type: 'close', message: `POZISYON KAPAT: Kısa SL (${this.params.STOPLOSS_SAT_PERCENT}% yükseliş)` };
             }
         }
 
@@ -200,22 +199,15 @@ class SSLHybridStrategy {
 
     run() {
         if (this.klines.length < Math.max(this.params.LEN, this.params.ATR_LEN)) {
-            console.log("Insufficient historical data to run strategy.");
             return [];
         }
 
         const signals = [];
         // Simulate trading bar by bar
         for (let i = 0; i < this.klines.length; i++) {
-            const subKlines = this.klines.slice(0, i + 1);
-            const strat = new SSLHybridStrategy(subKlines, this.params);
-            
-            // Re-run from the beginning to maintain state
-            for(let j=0; j<subKlines.length; j++) {
-                strat.computeSignals();
-            }
-
-            const signal = strat.computeSignals();
+            // computeSignals'a tüm geçmiş veriyi vermemize gerek yok,
+            // sınıfın kendisi zaten tüm veriyi tutuyor.
+            const signal = this.computeSignals();
             if (signal.type !== 'none') {
                 signals.push({
                     bar: i + 1,
@@ -237,9 +229,10 @@ const client = Binance({
     apiSecret: CFG.BINANCE_SECRET_KEY,
 });
 
+// Botun mevcut pozisyonunu saklayan global değişken
+let botCurrentPosition = 'none';
 let klines = [];
 let strategyInstance = null;
-let lastTelegramMessage = '';
 
 async function sendTelegramMessage(token, chatId, message) {
     if (!token || !chatId) return;
@@ -286,21 +279,16 @@ async function placeOrder(side, message) {
                 return;
             }
 
-            // Here you would implement your real order placement logic using client.futuresOrder
+            // Real order placement logic would go here
             console.log(`Simulating order: ${side} - Quantity: ${quantity} - Message: ${message}`);
-            // Simulating position update after successful order
+            
+            // Simulating a successful position update
             if (side === 'BUY') {
-                strategyInstance.currentPosition = 'long';
-                strategyInstance.longEntryPrice = symbolPrice;
-                strategyInstance.longEntryBarIndex = klines.length - 1;
-                strategyInstance.shortEntryPrice = null;
-                strategyInstance.shortEntryBarIndex = null;
+                botCurrentPosition = 'long';
             } else if (side === 'SELL') {
-                strategyInstance.currentPosition = 'short';
-                strategyInstance.shortEntryPrice = symbolPrice;
-                strategyInstance.shortEntryBarIndex = klines.length - 1;
-                strategyInstance.longEntryPrice = null;
-                strategyInstance.longEntryBarIndex = null;
+                botCurrentPosition = 'short';
+            } else {
+                botCurrentPosition = 'none';
             }
 
             sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Order placed: ${side} ${quantity.toFixed(4)} ${CFG.SYMBOL}`);
@@ -314,9 +302,8 @@ async function placeOrder(side, message) {
     }
 }
 
-
-async function fetchHistoricalData() {
-    console.log(`Fetching historical data: ${CFG.SYMBOL}, ${CFG.INTERVAL}`);
+async function initializeBot() {
+    console.log(`Fetching historical data for ${CFG.SYMBOL}, interval ${CFG.INTERVAL}`);
     try {
         const response = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL.toUpperCase()}&interval=${CFG.INTERVAL}&limit=1000`);
         const data = await response.json();
@@ -328,43 +315,38 @@ async function fetchHistoricalData() {
             volume: parseFloat(d[5]),
             closeTime: d[6]
         }));
-        console.log(`${klines.length} historical candle data successfully loaded.`);
+        console.log(`${klines.length} historical candles loaded.`);
+
+        if (klines.length > 0) {
+            // Geçmiş veriyi kullanarak strateji örneği oluştur ve son pozisyonu belirle
+            const historicalStrategy = new SSLHybridStrategy(klines, CFG);
+            const historicalSignals = historicalStrategy.run();
+            const lastSignal = historicalSignals.filter(s => s.type === 'long' || s.type === 'short' || s.type === 'close').at(-1);
+
+            if (lastSignal) {
+                // Son sinyale göre botun başlangıç pozisyonunu ayarla
+                if (lastSignal.type === 'long') botCurrentPosition = 'long';
+                else if (lastSignal.type === 'short') botCurrentPosition = 'short';
+                else if (lastSignal.type === 'close') botCurrentPosition = 'none';
+            }
+            
+            console.log(`Bot initialized. Historical analysis complete. Current position is: ${botCurrentPosition.toUpperCase()}`);
+
+            // Canlı veri için yeni bir strateji örneği oluştur
+            strategyInstance = new SSLHybridStrategy(klines, CFG);
+        }
+
     } catch (error) {
-        console.error('Error fetching historical data:', error.message);
+        console.error('Error initializing bot:', error.message);
         klines = [];
     }
 }
 
-async function processData() {
-    console.log(`Processing historical data...`);
-    
-    if (klines.length < Math.max(CFG.LEN, CFG.ATR_LEN)) {
-        console.log("Insufficient historical data, minimum bar count for processing not reached.");
-        return;
-    }
-
-    const strat = new SSLHybridStrategy(klines, CFG);
-    const results = strat.run();
-    
-    // Filter for unique entry/exit events
-    const entrySignals = results.filter(s => s.type === 'long' || s.type === 'short');
-    const lastSignal = entrySignals.at(-1);
-
-    console.log(`Historical data processed. Total Signals: ${entrySignals.length}, Last Signal: ${lastSignal ? lastSignal.type.toUpperCase() : 'None'} (Bar: ${lastSignal ? lastSignal.bar : 'N/A'})`);
-    sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `Bot successfully started. Historical data loaded. Total ${entrySignals.length} signals found.`);
-}
-
 const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
-ws.on('open', () => {
+ws.on('open', async () => {
     console.log('WebSocket connection opened.');
-    fetchHistoricalData().then(() => {
-        if (klines.length > 0) {
-            // Initialize the strategy instance with historical data
-            strategyInstance = new SSLHybridStrategy(klines, CFG);
-            processData();
-        }
-    });
+    await initializeBot();
 });
 
 ws.on('message', async (data) => {
@@ -381,49 +363,37 @@ ws.on('message', async (data) => {
             closeTime: kline.T
         };
         
-        if (strategyInstance) {
-            strategyInstance.addBar(newBar);
-            const signal = strategyInstance.computeSignals();
+        if (!strategyInstance) {
+            console.log("Strategy not initialized yet. Skipping bar.");
+            return;
+        }
 
-            const barIndex = strategyInstance.klines.length - 1;
-            const barTime = new Date(newBar.closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
-            console.log(`New candle data received. Bar No: ${barIndex + 1}, Time: ${barTime}, Closing Price: ${newBar.close}`);
-            
-            if (signal.type !== 'none') {
-                if (signal.type === 'long') {
-                    if (strategyInstance.currentPosition === 'long') {
-                        // Already in long position, do nothing
-                    } else if (strategyInstance.currentPosition === 'short') {
-                        // Close short position and open long
-                        await placeOrder('SELL', `YÖN DEĞİŞTİR: Mevcut SAT pozisyonu kapatılıyor`);
-                        await placeOrder('BUY', `YÖN DEĞİŞTİR: Yeni AL pozisyonu açılıyor`);
-                    } else {
-                        // Open new long position
-                        await placeOrder('BUY', signal.message);
-                    }
-                } else if (signal.type === 'short') {
-                    if (strategyInstance.currentPosition === 'short') {
-                        // Already in short position, do nothing
-                    } else if (strategyInstance.currentPosition === 'long') {
-                        // Close long position and open short
-                        await placeOrder('SELL', `YÖN DEĞİŞTİR: Mevcut AL pozisyonu kapatılıyor`);
-                        await placeOrder('BUY', `YÖN DEĞİŞTİR: Yeni SAT pozisyonu açılıyor`);
-                    } else {
-                        // Open new short position
-                        await placeOrder('SELL', signal.message);
-                    }
-                } else if (signal.type === 'close') {
-                    await placeOrder(strategyInstance.currentPosition === 'long' ? 'SELL' : 'BUY', signal.message);
-                }
+        strategyInstance.addBar(newBar);
+        const signal = strategyInstance.computeSignals();
+        
+        console.log(`New candle received. Close price: ${newBar.close}. Detected signal: ${signal.type}`);
+
+        // Sadece pozisyon değişimlerinde emir gönder
+        if (signal.type === 'long' && botCurrentPosition !== 'long') {
+            if (botCurrentPosition === 'short') {
+                await placeOrder('BUY', `Yön Değiştirme: Mevcut pozisyon kapatılıyor.`);
             }
+            await placeOrder('BUY', signal.message);
+        } else if (signal.type === 'short' && botCurrentPosition !== 'short') {
+            if (botCurrentPosition === 'long') {
+                await placeOrder('SELL', `Yön Değiştirme: Mevcut pozisyon kapatılıyor.`);
+            }
+            await placeOrder('SELL', signal.message);
+        } else if (signal.type === 'close' && botCurrentPosition !== 'none') {
+             await placeOrder(botCurrentPosition === 'long' ? 'SELL' : 'BUY', signal.message);
         }
     }
 });
 
 ws.on('close', () => {
-    console.log('WebSocket connection closed. Reconnecting...');
+    console.log('❌ WebSocket connection closed. Reconnecting...');
     setTimeout(() => {
-        // Reconnection function can go here
+        // Yeniden bağlanma mantığı buraya gelebilir
     }, 5000);
 });
 
