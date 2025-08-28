@@ -224,10 +224,14 @@ class SSLHybridStrategy {
 // =========================================================================================
 // MAIN BOT LOGIC
 // =========================================================================================
-const client = Binance({
-    apiKey: CFG.BINANCE_API_KEY,
-    apiSecret: CFG.BINANCE_SECRET_KEY,
-});
+let client = null;
+if (CFG.BINANCE_API_KEY && CFG.BINANCE_SECRET_KEY) {
+    client = Binance({
+        apiKey: CFG.BINANCE_API_KEY,
+        apiSecret: CFG.BINANCE_SECRET_KEY,
+    });
+}
+
 
 // Botun mevcut pozisyonunu saklayan global değişken
 let botCurrentPosition = 'none';
@@ -249,6 +253,10 @@ async function sendTelegramMessage(token, chatId, message) {
 }
 
 async function getBalance() {
+    if (!client) {
+        console.log('Bot is in simulation mode. Skipping balance check.');
+        return 1000; // Simülasyon için varsayılan bakiye
+    }
     try {
         const balanceResponse = await client.futuresBalance();
         const usdtBalance = balanceResponse.find(b => b.asset === 'USDT');
@@ -262,6 +270,11 @@ async function getBalance() {
 }
 
 async function placeOrder(side, message) {
+    if (!client) {
+        console.log(`Bot is in simulation mode. Detected signal: ${message}`);
+        return;
+    }
+    
     try {
         const balance = await getBalance();
         if (balance > 0) {
@@ -272,16 +285,24 @@ async function placeOrder(side, message) {
                 return;
             }
             const symbolPrice = lastBar.close;
-            const quantity = tradeSizeUSDT / symbolPrice;
+            let quantity = tradeSizeUSDT / symbolPrice;
+
+            // Pozisyonun tersine dönmesi durumunda miktarı ikiye katla
+            if ((side === 'BUY' && botCurrentPosition === 'short') || (side === 'SELL' && botCurrentPosition === 'long')) {
+                // Mevcut pozisyonu kapatmak ve yeni pozisyon açmak için iki kat miktar
+                quantity *= 2; 
+            }
 
             if (quantity <= 0) {
                 console.error("Calculated quantity is zero or less. Not placing order.");
                 return;
             }
 
-            // Real order placement logic would go here
-            console.log(`Simulating order: ${side} - Quantity: ${quantity} - Message: ${message}`);
+            console.log(`Simulating real order placement: ${side} - Quantity: ${quantity} - Message: ${message}`);
             
+            // Gerçek Binance API çağrısı burada yapılmalıdır
+            // const orderResponse = await client.futuresOrder(...)
+
             // Simulating a successful position update
             if (side === 'BUY') {
                 botCurrentPosition = 'long';
@@ -318,13 +339,11 @@ async function initializeBot() {
         console.log(`${klines.length} historical candles loaded.`);
 
         if (klines.length > 0) {
-            // Geçmiş veriyi kullanarak strateji örneği oluştur ve son pozisyonu belirle
             const historicalStrategy = new SSLHybridStrategy(klines, CFG);
             const historicalSignals = historicalStrategy.run();
             const lastSignal = historicalSignals.filter(s => s.type === 'long' || s.type === 'short' || s.type === 'close').at(-1);
 
             if (lastSignal) {
-                // Son sinyale göre botun başlangıç pozisyonunu ayarla
                 if (lastSignal.type === 'long') botCurrentPosition = 'long';
                 else if (lastSignal.type === 'short') botCurrentPosition = 'short';
                 else if (lastSignal.type === 'close') botCurrentPosition = 'none';
@@ -332,7 +351,6 @@ async function initializeBot() {
             
             console.log(`Bot initialized. Historical analysis complete. Current position is: ${botCurrentPosition.toUpperCase()}`);
 
-            // Canlı veri için yeni bir strateji örneği oluştur
             strategyInstance = new SSLHybridStrategy(klines, CFG);
         }
 
@@ -373,16 +391,9 @@ ws.on('message', async (data) => {
         
         console.log(`New candle received. Close price: ${newBar.close}. Detected signal: ${signal.type}`);
 
-        // Sadece pozisyon değişimlerinde emir gönder
         if (signal.type === 'long' && botCurrentPosition !== 'long') {
-            if (botCurrentPosition === 'short') {
-                await placeOrder('BUY', `Yön Değiştirme: Mevcut pozisyon kapatılıyor.`);
-            }
             await placeOrder('BUY', signal.message);
         } else if (signal.type === 'short' && botCurrentPosition !== 'short') {
-            if (botCurrentPosition === 'long') {
-                await placeOrder('SELL', `Yön Değiştirme: Mevcut pozisyon kapatılıyor.`);
-            }
             await placeOrder('SELL', signal.message);
         } else if (signal.type === 'close' && botCurrentPosition !== 'none') {
              await placeOrder(botCurrentPosition === 'long' ? 'SELL' : 'BUY', signal.message);
