@@ -82,6 +82,7 @@ const ssl1 = (klines, length, maType) => {
 
 // =========================================================================================
 // STRATEGY LOGIC - COPIED DIRECTLY FROM 3.HTML AND STRATEGY.JS
+// This is used for live data processing.
 // =========================================================================================
 const computeSignals = (klines, currentPosition, longEntryPrice, longEntryBarIndex, shortEntryPrice, shortEntryBarIndex) => {
     if (klines.length < Math.max(CFG.LEN, CFG.ATR_LEN)) {
@@ -257,45 +258,102 @@ async function processData() {
         return;
     }
 
-    // Initialize temporary position states for backtesting
+    // STATEFUL BACKTEST LOGIC - Mimicking 3.html
     let tempPosition = 'none';
     let tempLongEntryPrice = null;
     let tempLongEntryBarIndex = null;
     let tempShortEntryPrice = null;
     let tempShortEntryBarIndex = null;
-    
+    let consecutiveClosesAbove = 0;
+    let consecutiveClosesBelow = 0;
+
     for (let i = 0; i < klines.length; i++) {
         const subKlines = klines.slice(0, i + 1);
-        const signal = computeSignals(subKlines, tempPosition, tempLongEntryPrice, tempLongEntryBarIndex, tempShortEntryPrice, tempShortEntryBarIndex);
-        
-        // Update temporary position based on signals
-        if (signal.type !== 'none') {
-            signalCount++;
+        const currentBar = subKlines.at(-1);
+
+        const sourcePrices = CFG.BASELINE_SOURCE === 'close' ? subKlines.map(k => k.close)
+            : CFG.BASELINE_SOURCE === 'open' ? subKlines.map(k => k.open)
+            : CFG.BASELINE_SOURCE === 'high' ? subKlines.map(k => k.high)
+            : subKlines.map(k => k.low);
+
+        const baseline = movingAverage(sourcePrices, CFG.LEN, CFG.MA_TYPE);
+        const atrValue = atr(subKlines, CFG.ATR_LEN, CFG.ATR_SMOOTHING);
+        const bbmcUpperATR = baseline + atrValue * CFG.ATR_MULT;
+        const bbmcLowerATR = baseline - atrValue * CFG.ATR_MULT;
+        const ssl1Result = ssl1(subKlines, CFG.LEN, CFG.MA_TYPE);
+
+        // Update consecutive close counters
+        if (currentBar.close > bbmcUpperATR) {
+            consecutiveClosesAbove++;
+            consecutiveClosesBelow = 0;
+        } else if (currentBar.close < bbmcLowerATR) {
+            consecutiveClosesBelow++;
+            consecutiveClosesAbove = 0;
+        } else {
+            consecutiveClosesAbove = 0;
+            consecutiveClosesBelow = 0;
         }
         
-        if (signal.type === 'buy' || signal.type === 'flip_long') {
-            if (tempPosition !== 'long') {
-                tempPosition = 'long';
-                tempLongEntryPrice = subKlines.at(-1).close;
-                tempLongEntryBarIndex = i;
-                tempShortEntryPrice = null;
-                tempShortEntryBarIndex = null;
-            }
-        } else if (signal.type === 'sell' || signal.type === 'flip_short') {
-            if (tempPosition !== 'short') {
-                tempPosition = 'short';
-                tempShortEntryPrice = subKlines.at(-1).close;
-                tempShortEntryBarIndex = i;
-                tempLongEntryPrice = null;
-                tempLongEntryBarIndex = null;
-            }
-        } else if (signal.type === 'close') {
-            if (tempPosition !== 'none') {
+        let signalFound = false;
+        
+        // Stop-loss check (exit)
+        if (tempPosition === 'long' && CFG.USE_STOPLOSS_AL && tempLongEntryPrice !== null) {
+            const stopLossPrice = tempLongEntryPrice * (1 - CFG.STOPLOSS_AL_PERCENT / 100);
+            if (i >= tempLongEntryBarIndex + CFG.STOPLOSS_AL_ACTIVATION_BARS && currentBar.close <= stopLossPrice) {
                 tempPosition = 'none';
                 tempLongEntryPrice = null;
                 tempLongEntryBarIndex = null;
+                signalFound = true; // Count this as an event, but not a new entry
+            }
+        } else if (tempPosition === 'short' && CFG.USE_STOPLOSS_SAT && tempShortEntryPrice !== null) {
+            const stopLossPrice = tempShortEntryPrice * (1 + CFG.STOPLOSS_SAT_PERCENT / 100);
+            if (i >= tempShortEntryBarIndex + CFG.STOPLOSS_SAT_ACTIVATION_BARS && currentBar.close >= stopLossPrice) {
+                tempPosition = 'none';
                 tempShortEntryPrice = null;
                 tempShortEntryBarIndex = null;
+                signalFound = true; // Count this as an event, but not a new entry
+            }
+        }
+
+        // Entry conditions (if no stop-loss was triggered)
+        if (!signalFound) {
+            if (CFG.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
+                if (consecutiveClosesAbove === CFG.M_BARS_BUY && tempPosition !== 'long') {
+                    tempPosition = 'long';
+                    tempLongEntryPrice = currentBar.close;
+                    tempLongEntryBarIndex = i;
+                    tempShortEntryPrice = null;
+                    tempShortEntryBarIndex = null;
+                    signalCount++;
+                    // Reset consecutive counters to avoid multiple signals on the same trend
+                    consecutiveClosesAbove = 0; 
+                } else if (consecutiveClosesBelow === CFG.N_BARS_SELL && tempPosition !== 'short') {
+                    tempPosition = 'short';
+                    tempShortEntryPrice = currentBar.close;
+                    tempShortEntryBarIndex = i;
+                    tempLongEntryPrice = null;
+                    tempLongEntryBarIndex = null;
+                    signalCount++;
+                    // Reset consecutive counters
+                    consecutiveClosesBelow = 0;
+                }
+            } else if (CFG.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
+                const hlv = ssl1Result.hlv;
+                if (hlv === 1 && tempPosition !== 'long') {
+                    tempPosition = 'long';
+                    tempLongEntryPrice = currentBar.close;
+                    tempLongEntryBarIndex = i;
+                    tempShortEntryPrice = null;
+                    tempShortEntryBarIndex = null;
+                    signalCount++;
+                } else if (hlv === -1 && tempPosition !== 'short') {
+                    tempPosition = 'short';
+                    tempShortEntryPrice = currentBar.close;
+                    tempShortEntryBarIndex = i;
+                    tempLongEntryPrice = null;
+                    tempLongEntryBarIndex = null;
+                    signalCount++;
+                }
             }
         }
     }
