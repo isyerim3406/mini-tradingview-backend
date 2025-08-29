@@ -2,8 +2,8 @@ import WebSocket from 'ws';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
-// Binance API'yi doğru şekilde içe aktarın.
-import Binance from 'binance-api-node';
+// Binance API'yi doğru şekilde içe aktarıyoruz.
+import { Binance } from 'binance-api-node';
 
 dotenv.config();
 
@@ -36,7 +36,9 @@ const CFG = {
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     IS_TESTNET: process.env.IS_TESTNET === 'true',
-    INITIAL_CAPITAL: 100
+    INITIAL_CAPITAL: 100,
+    BINANCE_API_KEY: process.env.BINANCE_API_KEY,
+    BINANCE_SECRET_KEY: process.env.BINANCE_SECRET_KEY,
 };
 
 // =========================================================================================
@@ -83,7 +85,6 @@ async function sendTelegramMessage(text) {
 // TECHNICAL INDICATORS
 // =========================================================================================
 function getMovingAverage(series, length, maType) {
-    let result;
     if (series.length < length) {
         return [];
     }
@@ -114,7 +115,7 @@ function getATR(highs, lows, closes, length, smoothing) {
         return rma[rma.length - 1];
     } else {
         const atr = getMovingAverage(trs, length, 'SMA');
-        return atr[0];
+        return atr.length > 0 ? atr[0] : 0;
     }
 }
 
@@ -225,26 +226,29 @@ const binanceClient = Binance({
 async function placeOrder(side, signalMessage) {
     console.log(`📜 Sinyal Alındı: ${side} - ${signalMessage}`);
 
-    // Mevcut pozisyonu kontrol et ve gerekirse kapat
     if (botCurrentPosition !== 'none' && botCurrentPosition !== side.toLowerCase()) {
         try {
-            const closingSide = botCurrentPosition === 'long' ? 'SELL' : 'BUY';
-            const closingPosition = await binanceClient.futuresAccountBalance();
-            const positionSize = closingPosition.find(p => p.asset === CFG.SYMBOL.replace('USDT', '')).availableBalance;
-            await binanceClient.futuresMarketOrder({
-                symbol: CFG.SYMBOL,
-                side: closingSide,
-                quantity: positionSize,
-            });
-            console.log(`✅ Mevcut pozisyon (${botCurrentPosition}) kapatıldı.`);
-            botCurrentPosition = 'none';
+            const positions = await binanceClient.futuresAccountBalance();
+            const position = positions.find(p => p.asset === CFG.SYMBOL.replace('USDT', ''));
+
+            if (position && parseFloat(position.availableBalance) > 0) {
+                 const closingSide = botCurrentPosition === 'long' ? 'SELL' : 'BUY';
+                 const quantity = parseFloat(position.availableBalance);
+                 await binanceClient.futuresMarketOrder({
+                     symbol: CFG.SYMBOL,
+                     side: closingSide,
+                     quantity: quantity,
+                 });
+                 console.log(`✅ Mevcut pozisyon (${botCurrentPosition}) kapatıldı.`);
+                 botCurrentPosition = 'none';
+            }
         } catch (error) {
             console.error('Mevcut pozisyonu kapatırken hata oluştu:', error.body || error);
+            // Hata durumunda işlemi sonlandır
             return;
         }
     }
 
-    // Yeni pozisyon aç
     if (botCurrentPosition === 'none') {
         try {
             const ticker = await binanceClient.prices({ symbol: CFG.SYMBOL });
@@ -282,16 +286,9 @@ async function placeOrder(side, signalMessage) {
 // =========================================================================================
 const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
-// Botu başlatırken geçmiş verileri çek
 async function fetchInitialData() {
     try {
-        const client = Binance({
-            apiKey: CFG.BINANCE_API_KEY,
-            apiSecret: CFG.BINANCE_SECRET_KEY,
-            // test: CFG.IS_TESTNET,
-        });
-
-        const initialKlines = await client.candles({
+        const initialKlines = await binanceClient.candles({
             symbol: CFG.SYMBOL,
             interval: CFG.INTERVAL,
             limit: 500
@@ -307,7 +304,6 @@ async function fetchInitialData() {
         }));
         console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
         
-        // Telegrama başlangıç mesajı gönder
         sendTelegramMessage(`✅ Bot başlatıldı!\n\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
 
     } catch (error) {
@@ -321,8 +317,7 @@ ws.on('message', async (message) => {
     const data = JSON.parse(message);
     const klineData = data.k;
 
-    if (klineData.x) { // Kline kapanışı
-        // Sinyal hesaplamadan önce mevcut mum verisini güncelle
+    if (klineData.x) {
         const newBar = {
             open: parseFloat(klineData.o),
             high: parseFloat(klineData.h),
@@ -332,7 +327,6 @@ ws.on('message', async (message) => {
             closeTime: klineData.T
         };
         
-        // Kline verisini ekle ve boyutunu koru
         klines.push(newBar);
         if (klines.length > 500) {
             klines.shift();
@@ -361,7 +355,6 @@ ws.on('error', (error) => {
     console.error('WebSocket hatası:', error.message);
 });
 
-// Botun çalışır durumda olduğunu göstermek için basit bir web sunucusu
 app.get('/', (req, res) => {
     res.send('Bot çalışıyor!');
 });
