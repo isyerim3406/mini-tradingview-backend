@@ -54,17 +54,48 @@ let isBotInitialized = false;
 // API anahtarlarının varlığına göre simülasyon modunu belirliyoruz.
 const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY;
 
-let binanceClient = null;
-if (!isSimulationMode) {
-    binanceClient = Binance({
-        apiKey: process.env.BINANCE_API_KEY,
-        apiSecret: process.env.BINANCE_SECRET_KEY,
-        test: CFG.IS_TESTNET,
-    });
-} else {
-    console.log('--- SİMÜLASYON MODU AKTİF: API Anahtarları Bulunamadı ---');
-}
+// Simülasyon modu için sahte bir Binance istemcisi oluşturma
+const mockBinanceClient = {
+    futuresAccountBalance: async () => {
+        // Mock verisi döndür
+        return [{ asset: 'USDT', availableBalance: '1000' }];
+    },
+    futuresMarketOrder: async ({ side, quantity }) => {
+        console.log(`[SİMÜLASYON] ${side} emri başarıyla oluşturuldu: ${quantity}`);
+        return { status: 'FILLED' };
+    },
+    candles: async ({ symbol, interval, limit }) => {
+        // Simülasyon modunda sembol için sahte mum verileri üret
+        const mockCandles = [];
+        let price = 4300;
+        let now = Date.now();
+        for (let i = 0; i < limit; i++) {
+            const open = price;
+            const close = open + (Math.random() - 0.5) * 10;
+            mockCandles.push({
+                open: open.toFixed(2),
+                high: Math.max(open, close).toFixed(2),
+                low: Math.min(open, close).toFixed(2),
+                close: close.toFixed(2),
+                closeTime: now - (limit - i) * 60 * 1000,
+                volume: (1000 + Math.random() * 500).toFixed(2),
+            });
+            price = close;
+        }
+        return mockCandles;
+    },
+    prices: async ({ symbol }) => {
+        const lastPrice = klines.length > 0 ? klines[klines.length - 1].close : 4300;
+        return { [symbol]: lastPrice.toString() };
+    }
+};
 
+// Mod durumuna göre doğru istemciyi atama
+const binanceClient = isSimulationMode ? mockBinanceClient : Binance({
+    apiKey: process.env.BINANCE_API_KEY,
+    apiSecret: process.env.BINANCE_SECRET_KEY,
+    test: CFG.IS_TESTNET,
+});
 
 // =========================================================================================
 // TELEGRAM
@@ -236,27 +267,18 @@ async function placeOrder(side, signalMessage) {
     // Mevcut pozisyonu kapatma
     if (botCurrentPosition !== 'none' && botCurrentPosition !== side.toLowerCase()) {
         try {
-            let profit = 0;
             const entryPrice = botCurrentPosition === 'long' ? longEntryPrice : shortEntryPrice;
-
-            if (isSimulationMode) {
-                // Simülasyon modunda kâr/zarar hesaplaması
-                profit = botCurrentPosition === 'long' ? (lastClosePrice - entryPrice) : (entryPrice - lastClosePrice);
-                totalNetProfit += profit;
-
-                console.log(`SİMÜLASYON MODU: Mevcut pozisyon (${botCurrentPosition}) kapatıldı.`);
-            } else {
-                // Gerçek modda pozisyonu kapatma
+            const profit = botCurrentPosition === 'long' ? (lastClosePrice - entryPrice) : (entryPrice - lastClosePrice);
+            totalNetProfit += profit;
+            
+            // Eğer gerçek modda değilsek, API çağrısı yapma
+            if (!isSimulationMode) {
                 const positions = await binanceClient.futuresAccountBalance();
                 const position = positions.find(p => p.asset === CFG.SYMBOL.replace('USDT', ''));
                 
                 if (position && parseFloat(position.balance) > 0) {
                      const closingSide = botCurrentPosition === 'long' ? 'SELL' : 'BUY';
                      const quantity = parseFloat(position.balance);
-                     
-                     // Gerçek kâr hesaplaması (sadece test amaçlı basit bir hesaplama)
-                     profit = botCurrentPosition === 'long' ? (lastClosePrice - entryPrice) : (entryPrice - lastClosePrice);
-                     totalNetProfit += profit;
                      
                      await binanceClient.futuresMarketOrder({
                          symbol: CFG.SYMBOL,
@@ -265,6 +287,8 @@ async function placeOrder(side, signalMessage) {
                      });
                      console.log(`✅ Gerçek pozisyon (${botCurrentPosition}) kapatıldı.`);
                 }
+            } else {
+                console.log(`[SİMÜLASYON] Mevcut pozisyon (${botCurrentPosition}) kapatıldı.`);
             }
 
             const profitMessage = profit >= 0 ? `+${profit.toFixed(2)} USDT` : `${profit.toFixed(2)} USDT`;
@@ -281,15 +305,10 @@ async function placeOrder(side, signalMessage) {
     // Yeni pozisyonu açma
     if (botCurrentPosition === 'none') {
         try {
-            const currentPrice = lastClosePrice; // Simülasyon için son kapanış fiyatını kullan
+            const currentPrice = lastClosePrice;
             let quantity = 0;
 
-            if (isSimulationMode) {
-                // Simülasyon modunda miktar hesaplaması
-                quantity = (CFG.INITIAL_CAPITAL * (CFG.TRADE_SIZE_PERCENT / 100)) / currentPrice;
-                console.log(`SİMÜLASYON MODU: ${side} emri verildi. Fiyat: ${currentPrice}`);
-            } else {
-                // Gerçek modda miktar hesaplaması
+            if (!isSimulationMode) {
                 const accountInfo = await binanceClient.futuresAccountBalance();
                 const usdtBalance = parseFloat(accountInfo.find(a => a.asset === 'USDT').availableBalance);
                 quantity = (usdtBalance * (CFG.TRADE_SIZE_PERCENT / 100)) / currentPrice;
@@ -300,6 +319,9 @@ async function placeOrder(side, signalMessage) {
                     quantity: quantity.toFixed(4)
                 });
                 console.log(`🟢 ${side} emri başarıyla verildi. Fiyat: ${currentPrice}`);
+            } else {
+                quantity = (CFG.INITIAL_CAPITAL * (CFG.TRADE_SIZE_PERCENT / 100)) / currentPrice;
+                console.log(`[SİMÜLASYON] ${side} emri verildi. Fiyat: ${currentPrice}`);
             }
 
             if (side === 'BUY') {
@@ -342,7 +364,6 @@ async function fetchInitialData() {
         }));
         console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
 
-        // Yalnızca bot ilk kez başlatıldığında mesaj gönder
         if (!isBotInitialized) {
             sendTelegramMessage(`✅ Bot başlatıldı!\n\n**Mod:** ${isSimulationMode ? 'Simülasyon' : 'Canlı İşlem'}\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
             isBotInitialized = true;
@@ -353,16 +374,7 @@ async function fetchInitialData() {
     }
 }
 
-if (!isSimulationMode) {
-    fetchInitialData();
-} else {
-    // Simülasyon modunda ilk verileri çekmek için BinanceClient'a ihtiyacımız yok, direkt devam edebiliriz.
-    // Ancak sağlıklı bir simülasyon için buraya manuel veri yükleme mantığı eklenebilir.
-    // Şimdilik WebSocket bağlantısı ile canlı verileri almaya devam ediyoruz.
-    sendTelegramMessage(`✅ Bot simülasyon modunda başlatıldı!\n\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
-    isBotInitialized = true;
-}
-
+fetchInitialData();
 
 ws.on('message', async (message) => {
     const data = JSON.parse(message);
