@@ -2,7 +2,6 @@ import WebSocket from 'ws';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
-// Binance API'yi Node.js'in önerdiği şekilde doğru olarak içe aktarıyoruz.
 import pkg from 'binance-api-node';
 const Binance = pkg.default || pkg;
 
@@ -38,8 +37,6 @@ const CFG = {
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     IS_TESTNET: process.env.IS_TESTNET === 'true',
     INITIAL_CAPITAL: 100,
-    BINANCE_API_KEY: process.env.BINANCE_API_KEY,
-    BINANCE_SECRET_KEY: process.env.BINANCE_SECRET_KEY,
 };
 
 // =========================================================================================
@@ -51,8 +48,8 @@ let longEntryPrice = null;
 let longEntryBarIndex = -1;
 let shortEntryPrice = null;
 let shortEntryBarIndex = -1;
-let currentCapital = CFG.INITIAL_CAPITAL;
 let totalNetProfit = 0;
+let isBotInitialized = false; // Botun ilk başlatılıp başlatılmadığını kontrol etmek için bayrak
 
 // =========================================================================================
 // TELEGRAM
@@ -219,37 +216,50 @@ function computeSignals() {
 // ORDER PLACEMENT & TRADING LOGIC
 // =========================================================================================
 const binanceClient = Binance({
-    apiKey: CFG.BINANCE_API_KEY,
-    apiSecret: CFG.BINANCE_SECRET_KEY,
-    // test: CFG.IS_TESTNET,
+    // API anahtarlarını doğrudan process.env'den alıyoruz.
+    apiKey: process.env.BINANCE_API_KEY,
+    apiSecret: process.env.BINANCE_SECRET_KEY,
+    test: CFG.IS_TESTNET,
 });
 
 async function placeOrder(side, signalMessage) {
     console.log(`📜 Sinyal Alındı: ${side} - ${signalMessage}`);
+    const lastClosePrice = klines[klines.length - 1]?.close || 0;
 
+    // Mevcut pozisyonu kapatma
     if (botCurrentPosition !== 'none' && botCurrentPosition !== side.toLowerCase()) {
         try {
             const positions = await binanceClient.futuresAccountBalance();
             const position = positions.find(p => p.asset === CFG.SYMBOL.replace('USDT', ''));
-
-            if (position && parseFloat(position.availableBalance) > 0) {
+            
+            if (position && parseFloat(position.balance) > 0) {
                  const closingSide = botCurrentPosition === 'long' ? 'SELL' : 'BUY';
-                 const quantity = parseFloat(position.availableBalance);
+                 const quantity = parseFloat(position.balance);
+                 // Bu kısımda sadece test amaçlı bir fiyat farkı hesaplıyoruz.
+                 const entryPrice = botCurrentPosition === 'long' ? longEntryPrice : shortEntryPrice;
+                 const profit = botCurrentPosition === 'long' ? (lastClosePrice - entryPrice) : (entryPrice - lastClosePrice);
+                 totalNetProfit += profit;
+                 
                  await binanceClient.futuresMarketOrder({
                      symbol: CFG.SYMBOL,
                      side: closingSide,
                      quantity: quantity,
                  });
+
+                 const profitMessage = profit >= 0 ? `+${profit.toFixed(2)} USDT` : `${profit.toFixed(2)} USDT`;
+                 const positionCloseMessage = `📉 Pozisyon kapatıldı! ${botCurrentPosition.toUpperCase()}\n\nSon Kapanış Fiyatı: ${lastClosePrice}\nBu İşlemden Kâr/Zarar: ${profitMessage}\n**Toplam Net Kâr: ${totalNetProfit.toFixed(2)} USDT**`;
+                 sendTelegramMessage(positionCloseMessage);
+                 
                  console.log(`✅ Mevcut pozisyon (${botCurrentPosition}) kapatıldı.`);
                  botCurrentPosition = 'none';
             }
         } catch (error) {
             console.error('Mevcut pozisyonu kapatırken hata oluştu:', error.body || error);
-            // Hata durumunda işlemi sonlandır
             return;
         }
     }
 
+    // Yeni pozisyonu açma
     if (botCurrentPosition === 'none') {
         try {
             const ticker = await binanceClient.prices({ symbol: CFG.SYMBOL });
@@ -275,7 +285,7 @@ async function placeOrder(side, signalMessage) {
             }
 
             console.log(`🟢 ${side} emri başarıyla verildi. Fiyat: ${currentPrice}`);
-            sendTelegramMessage(`🚀 **${side} Emri Gerçekleşti!**\n\n**Sinyal:** ${signalMessage}\n**Sembol:** ${CFG.SYMBOL}\n**Fiyat:** ${currentPrice}\n**Miktar:** ${quantity.toFixed(4)}`);
+            sendTelegramMessage(`🚀 **${side} Emri Gerçekleşti!**\n\n**Sinyal:** ${signalMessage}\n**Fiyat:** ${currentPrice}\n**Miktar:** ${quantity.toFixed(4)}\n**Toplam Net Kâr: ${totalNetProfit.toFixed(2)} USDT**`);
         } catch (error) {
             console.error('Emir verirken hata oluştu:', error.body || error);
         }
@@ -300,12 +310,16 @@ async function fetchInitialData() {
             high: parseFloat(k.high),
             low: parseFloat(k.low),
             close: parseFloat(k.close),
-            volume: parseFloat(k.volume),
+            volume: parseFloat(k.v),
             closeTime: k.closeTime
         }));
         console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
-        
-        sendTelegramMessage(`✅ Bot başlatıldı!\n\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
+
+        // Yalnızca bot ilk kez başlatıldığında mesaj gönder
+        if (!isBotInitialized) {
+            sendTelegramMessage(`✅ Bot başlatıldı!\n\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
+            isBotInitialized = true;
+        }
 
     } catch (error) {
         console.error('İlk verileri çekerken hata:', error);
