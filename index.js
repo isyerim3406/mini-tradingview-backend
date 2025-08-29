@@ -344,6 +344,11 @@ if (CFG.BINANCE_API_KEY && CFG.BINANCE_SECRET_KEY && CFG.BINANCE_API_KEY.trim().
 let botCurrentPosition = 'none';
 let strategyInstance = null;
 
+// Profit tracking variables
+const initialCapital = 100;
+let currentCapital = initialCapital;
+let netProfit = 0;
+
 async function sendTelegramMessage(token, chatId, message) {
     if (!token || !chatId) return;
     try {
@@ -361,7 +366,7 @@ async function sendTelegramMessage(token, chatId, message) {
 async function getBalance() {
     if (isSimulationMode) {
         console.log('Bot is in simulation mode. Skipping balance check.');
-        return 1000; // Default balance for simulation
+        return currentCapital; // Use the simulated capital
     }
     try {
         const balanceResponse = await client.futuresBalance();
@@ -375,13 +380,16 @@ async function getBalance() {
     return 0;
 }
 
-async function placeOrder(side, message) {
+async function placeOrder(side, message, profitMessage) {
     const intendedPosition = side === 'BUY' ? 'long' : (side === 'SELL' ? 'short' : 'none');
+    
+    // Add profit message to the main message if it exists
+    const fullMessage = profitMessage ? `${message} (${profitMessage})` : message;
 
     if (isSimulationMode) {
-        console.log(`Bot is in simulation mode. Simulated order: ${side} - Message: ${message}`);
+        console.log(`Bot is in simulation mode. Simulated order: ${side} - Message: ${fullMessage}`);
         botCurrentPosition = intendedPosition;
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Simulated Order: ${side}`);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Simüle Edilmiş Emir: ${fullMessage}`);
         return;
     }
     
@@ -392,7 +400,7 @@ async function placeOrder(side, message) {
             const lastBar = strategyInstance.data.at(-1);
             if (!lastBar) {
                 console.error("No recent bar data to calculate trade size.");
-                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: No recent bar data.');
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Emir başarısız: Son mum verisi yok.');
                 return;
             }
             const symbolPrice = lastBar.close;
@@ -406,25 +414,25 @@ async function placeOrder(side, message) {
 
             if (quantity <= 0) {
                 console.error("Calculated quantity is zero or less. Not placing order.");
-                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: Calculated quantity is zero or less.');
+                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Emir başarısız: Hesaplanan miktar sıfır veya daha az.');
                 return;
             }
 
-            console.log(`Attempting real order placement: ${side} - Quantity: ${quantity} - Message: ${message}`);
+            console.log(`Attempting real order placement: ${side} - Quantity: ${quantity} - Message: ${fullMessage}`);
             
             // The actual Binance API call should be made here
             // const orderResponse = await client.futuresOrder(...)
 
             // Update bot position state on successful attempt
             botCurrentPosition = intendedPosition;
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Order placed: ${side} ${quantity.toFixed(4)} ${CFG.SYMBOL}`);
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Emir Verildi: ${fullMessage}`);
         } else {
             console.log('Insufficient balance to place an order.');
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: Insufficient balance.');
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Emir başarısız: Yetersiz bakiye.');
         }
     } catch (error) {
         console.error('Error placing order:', error.message);
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `❌ Order Error: ${error.message}`);
+        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `❌ Emir Hatası: ${error.message}`);
     }
 }
 
@@ -490,19 +498,46 @@ ws.on('message', async (data) => {
             return;
         }
 
+        const prevBotPosition = botCurrentPosition;
         strategyInstance.addBar(newBar);
         const signal = strategyInstance.computeSignals();
         
         console.log(`New candle received. Close price: ${newBar.close}. Detected signal: ${signal.type}`);
 
+        let profitMessage = '';
+        let closedPositionType = '';
+
+        // Check if a position is being closed/flipped
+        if ((signal.type === 'long' || signal.type === 'flip_long') && prevBotPosition === 'short') {
+            const shortEntryPrice = strategyInstance.shortEntryPrice;
+            if (shortEntryPrice) {
+                const percentageChange = (shortEntryPrice - newBar.close) / shortEntryPrice;
+                const lastPositionProfit = currentCapital * percentageChange;
+                currentCapital += lastPositionProfit;
+                netProfit += lastPositionProfit;
+                profitMessage = `(Kapatılan pozisyon net karı: ${lastPositionProfit.toFixed(2)} USD, toplam net kar: ${netProfit.toFixed(2)} USD)`;
+                closedPositionType = 'Kısa';
+            }
+        } else if ((signal.type === 'short' || signal.type === 'flip_short') && prevBotPosition === 'long') {
+            const longEntryPrice = strategyInstance.longEntryPrice;
+            if (longEntryPrice) {
+                const percentageChange = (newBar.close - longEntryPrice) / longEntryPrice;
+                const lastPositionProfit = currentCapital * percentageChange;
+                currentCapital += lastPositionProfit;
+                netProfit += lastPositionProfit;
+                profitMessage = `(Kapatılan pozisyon net karı: ${lastPositionProfit.toFixed(2)} USD, toplam net kar: ${netProfit.toFixed(2)} USD)`;
+                closedPositionType = 'Uzun';
+            }
+        }
+        
         if (signal.type === 'long' && botCurrentPosition !== 'long') {
-            await placeOrder('BUY', signal.message);
+            await placeOrder('BUY', `AL sinyali geldi! ${signal.message}`, profitMessage);
         } else if (signal.type === 'short' && botCurrentPosition !== 'short') {
-            await placeOrder('SELL', signal.message);
+            await placeOrder('SELL', `SAT sinyali geldi! ${signal.message}`, profitMessage);
         } else if (signal.type === 'flip_long' && botCurrentPosition !== 'long') {
-            await placeOrder('BUY', signal.message);
+            await placeOrder('BUY', `FLIP AL sinyali geldi! ${signal.message}`, profitMessage);
         } else if (signal.type === 'flip_short' && botCurrentPosition !== 'short') {
-            await placeOrder('SELL', signal.message);
+            await placeOrder('SELL', `FLIP SAT sinyali geldi! ${signal.message}`, profitMessage);
         }
     }
 });
