@@ -128,47 +128,45 @@ class SSLHybridStrategy {
         const bbmcLowerATR = baseline - atrValue * this.params.ATR_MULT;
         const ssl1Result = ssl1(this.klines, this.params.LEN, this.params.MA_TYPE);
         
-        // Önce pozisyon kapatma sinyalleri kontrol edilir.
-        if (this.currentPosition === 'long') {
+        // Check for stop-loss and exit signals first
+        if (this.currentPosition === 'long' && this.params.USE_STOPLOSS_AL && this.longEntryPrice !== null) {
             const stopLossPrice = this.longEntryPrice * (1 - this.params.STOPLOSS_AL_PERCENT / 100);
-            if (this.params.USE_STOPLOSS_AL && this.longEntryPrice !== null && lastBar.close <= stopLossPrice) {
-                this.currentPosition = 'none';
+            if (currentBarIndex >= this.longEntryBarIndex + this.params.STOPLOSS_AL_ACTIVATION_BARS && lastBar.close <= stopLossPrice) {
                 return { type: 'close', message: `POZISYON KAPAT: Uzun SL (${this.params.STOPLOSS_AL_PERCENT}% düşüş)` };
             }
-            if (lastBar.close < baseline) {
-                this.currentPosition = 'none';
-                return { type: 'close', message: 'POZISYON KAPAT: Yükseliş trendi sonu' };
-            }
-        } else if (this.currentPosition === 'short') {
+        } else if (this.currentPosition === 'short' && this.params.USE_STOPLOSS_SAT && this.shortEntryPrice !== null) {
             const stopLossPrice = this.shortEntryPrice * (1 + this.params.STOPLOSS_SAT_PERCENT / 100);
-            if (this.params.USE_STOPLOSS_SAT && this.shortEntryPrice !== null && lastBar.close >= stopLossPrice) {
-                this.currentPosition = 'none';
+            if (currentBarIndex >= this.shortEntryBarIndex + this.params.STOPLOSS_SAT_ACTIVATION_BARS && lastBar.close >= stopLossPrice) {
                 return { type: 'close', message: `POZISYON KAPAT: Kısa SL (${this.params.STOPLOSS_SAT_PERCENT}% yükseliş)` };
-            }
-            if (lastBar.close > baseline) {
-                this.currentPosition = 'none';
-                return { type: 'close', message: 'POZISYON KAPAT: Düşüş trendi sonu' };
             }
         }
 
-        // Pozisyon yoksa veya zıt yönlü sinyal geliyorsa, giriş sinyalleri kontrol edilir.
-        // Art arda gelen bar sayılarını güncelleme
-        this.consecutive_closes_above_entry_target = (lastBar.close > bbmcUpperATR) ? this.consecutive_closes_above_entry_target + 1 : 0;
-        this.consecutive_closes_below_entry_target = (lastBar.close < bbmcLowerATR) ? this.consecutive_closes_below_entry_target + 1 : 0;
-
         let entryAction = { type: 'none', message: '' };
 
-        if (this.params.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
-            const longCondition = this.consecutive_closes_above_entry_target >= this.params.M_BARS_BUY && this.params.M_BARS_BUY > 0;
-            const shortCondition = this.consecutive_closes_below_entry_target >= this.params.N_BARS_SELL && this.params.N_BARS_SELL > 0;
-            
-            if (longCondition && this.currentPosition !== 'long') {
-                entryAction = { type: 'long', message: `AL: ${this.params.M_BARS_BUY} bar BBMC+ATR üstü` };
-            } else if (shortCondition && this.currentPosition !== 'short') {
-                entryAction = { type: 'short', message: `SAT: ${this.params.N_BARS_SELL} bar BBMC+ATR altı` };
-            }
+        // Update consecutive counter
+        if (lastBar.close > bbmcUpperATR) {
+            this.consecutive_closes_above_entry_target++;
+            this.consecutive_closes_below_entry_target = 0;
+        } else if (lastBar.close < bbmcLowerATR) {
+            this.consecutive_closes_below_entry_target++;
+            this.consecutive_closes_above_entry_target = 0;
+        } else {
+            this.consecutive_closes_above_entry_target = 0;
+            this.consecutive_closes_below_entry_target = 0;
+        }
 
-        } else if (this.params.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
+        // Entry conditions
+        const longCondition = this.consecutive_closes_above_entry_target === this.params.M_BARS_BUY && this.params.M_BARS_BUY > 0;
+        const shortCondition = this.consecutive_closes_below_entry_target === this.params.N_BARS_SELL && this.params.N_BARS_SELL > 0;
+
+        if (longCondition && this.currentPosition !== 'long') {
+            entryAction = { type: 'long', message: `AL: ${this.params.M_BARS_BUY} bar BBMC+ATR üstü` };
+        } else if (shortCondition && this.currentPosition !== 'short') {
+            entryAction = { type: 'short', message: `SAT: ${this.params.N_BARS_SELL} bar BBMC+ATR altı` };
+        }
+
+        // SSL1 check if BBMC doesn't provide a signal
+        if (entryAction.type === 'none' && this.params.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
             const hlv = ssl1Result.hlv;
             if (hlv === 1 && this.currentPosition !== 'long') {
                 entryAction = { type: 'long', message: 'AL: SSL1 Kesişimi (Yükseliş)' };
@@ -177,7 +175,7 @@ class SSLHybridStrategy {
             }
         }
         
-        // Sinyal varsa pozisyonu güncelle
+        // Update position based on entry action
         if (entryAction.type === 'long') {
             this.currentPosition = 'long';
             this.longEntryPrice = lastBar.close;
@@ -190,8 +188,17 @@ class SSLHybridStrategy {
             this.shortEntryBarIndex = currentBarIndex;
             this.longEntryPrice = null;
             this.longEntryBarIndex = null;
+        } else if (entryAction.type === 'none' && this.currentPosition !== 'none') {
+            // Check for cross-over signals that close a position
+            if (this.currentPosition === 'long' && lastBar.close < bbmcUpperATR) {
+                entryAction = { type: 'close', message: 'POZISYON KAPAT: Yükseliş trendi sonu' };
+                this.currentPosition = 'none';
+            } else if (this.currentPosition === 'short' && lastBar.close > bbmcLowerATR) {
+                entryAction = { type: 'close', message: 'POZISYON KAPAT: Düşüş trendi sonu' };
+                this.currentPosition = 'none';
+            }
         }
-
+        
         return entryAction;
     }
 
@@ -400,7 +407,7 @@ ws.on('message', async (data) => {
         } else if (signal.type === 'short' && botCurrentPosition !== 'short') {
             await placeOrder('SELL', signal.message);
         } else if (signal.type === 'close' && botCurrentPosition !== 'none') {
-            await placeOrder(botCurrentPosition === 'long' ? 'SELL' : 'BUY', signal.message);
+             await placeOrder(botCurrentPosition === 'long' ? 'SELL' : 'BUY', signal.message);
         }
     }
 });
