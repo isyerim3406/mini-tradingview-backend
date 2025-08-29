@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
 import Binance from 'binance-api-node';
+import pkg from 'technicalindicators';
+const { sma, ema, wma, rma } = pkg;
 
 dotenv.config();
 
@@ -10,245 +12,171 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // =========================================================================================
-// STRATEGY CONFIGURATION
+// STRATEGY CONFIGURATION (from .env or defaults)
 // =========================================================================================
 const CFG = {
-    USE_STOPLOSS_AL: true,
-    STOPLOSS_AL_PERCENT: 1.4,
-    STOPLOSS_AL_ACTIVATION_BARS: 1,
-    USE_STOPLOSS_SAT: true,
-    STOPLOSS_SAT_PERCENT: 1.3,
-    STOPLOSS_SAT_ACTIVATION_BARS: 1,
-    LEN: 164,
-    ATR_LEN: 14,
-    ATR_MULT: 3.2,
-    ATR_SMOOTHING: 'SMA',
-    MA_TYPE: 'SMA',
-    BASELINE_SOURCE: 'close',
-    ENTRY_SIGNAL_TYPE: 'BBMC+ATR Bands',
-    M_BARS_BUY: 1,
-    N_BARS_SELL: 3,
-    TRADE_SIZE_PERCENT: 100,
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
     INTERVAL: process.env.INTERVAL || '1m',
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     BINANCE_API_KEY: process.env.BINANCE_API_KEY,
-    BINANCE_SECRET_KEY: process.env.BINANCE_SECRET_KEY
+    BINANCE_SECRET_KEY: process.env.BINANCE_SECRET_KEY,
+    TRADE_SIZE: 0.001,
+    // Strategy settings (to be overridden on Render.com or in the .env file)
+    ATR_LEN: parseFloat(process.env.ATR_LEN) || 14,
+    ATR_MULT: parseFloat(process.env.ATR_MULT) || 1.0,
+    ATR_SMOOTHING: process.env.ATR_SMOOTHING || 'WMA',
+    MA_TYPE: process.env.MA_TYPE || 'HMA',
+    BASELINE_SOURCE: process.env.BASELINE_SOURCE || 'close',
+    LEN: parseFloat(process.env.LEN) || 60,
+    KIDIV: parseFloat(process.env.KIDIV) || 1,
+    ENTRY_SIGNAL_TYPE: process.env.ENTRY_SIGNAL_TYPE || 'SSL1 Kesişimi',
+    M_BARS_BUY: parseFloat(process.env.M_BARS_BUY) || 1,
+    N_BARS_SELL: parseFloat(process.env.N_BARS_SELL) || 1,
+    USE_STOP_LOSS_AL: process.env.USE_STOP_LOSS_AL === 'true',
+    STOP_LOSS_AL_PERCENT: parseFloat(process.env.STOP_LOSS_AL_PERCENT) || 2.0,
+    STOP_LOSS_AL_ACTIVATION_BARS: parseFloat(process.env.STOP_LOSS_AL_ACTIVATION_BARS) || 1,
+    USE_STOP_LOSS_SAT: process.env.USE_STOP_LOSS_SAT === 'true',
+    STOP_LOSS_SAT_PERCENT: parseFloat(process.env.STOP_LOSS_SAT_PERCENT) || 2.0,
+    STOP_LOSS_SAT_ACTIVATION_BARS: parseFloat(process.env.STOP_LOSS_SAT_ACTIVATION_BARS) || 1,
 };
 
 // =========================================================================================
-// INDICATORS - Extracted from 3.html
+// INDICATORS & HELPER FUNCTIONS
+// All logic from indicators.js is moved here.
 // =========================================================================================
-import pkg from 'technicalindicators';
-const { sma, ema, wma, rma } = pkg;
 
-// Helper function to find the lowest value in an array
+const getAvg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
 const getLowest = (arr) => Math.min(...arr);
-// Helper function to find the highest value in an array
 const getHighest = (arr) => Math.max(...arr);
 
-// Function to calculate a moving average based on type
-const movingAverage = (source, length, type) => {
+const movingAverage = (source, length, type, k) => {
     if (source.length < length) return NaN;
+    const values = source.slice(-length);
     switch (type) {
-        case 'SMA': return sma({ period: length, values: source }).at(-1);
-        case 'EMA': return ema({ period: length, values: source }).at(-1);
-        case 'WMA': return wma({ period: length, values: source }).at(-1);
-        case 'RMA': return rma({ period: length, values: source }).at(-1);
-        default: return sma({ period: length, values: source }).at(-1);
+        case 'SMA': return sma({ period: length, values: values }).at(-1);
+        case 'EMA': return ema({ period: length, values: values }).at(-1);
+        case 'WMA': return wma({ period: length, values: values }).at(-1);
+        case 'RMA': return rma({ period: length, values: values }).at(-1);
+        case 'HMA':
+            const wma1_vals = source.slice(-Math.round(length / 2));
+            const wma1 = wma({ period: Math.round(length / 2), values: wma1_vals }).at(-1);
+            const wma2 = wma({ period: length, values: source.slice(-length) }).at(-1);
+            if (isNaN(wma1) || isNaN(wma2)) return NaN;
+            const wmaDiff = wma1 * 2 - wma2;
+            return wma({ period: Math.round(Math.sqrt(length)), values: [wmaDiff] }).at(-1);
+        case 'Kijun v2':
+            const kijun = (getLowest(values.map(b => b.low)) + getHighest(values.map(b => b.high))) / 2;
+            const conversion = (getLowest(values.slice(-Math.max(1, Math.floor(length / k))).map(b => b.low)) + getHighest(values.slice(-Math.max(1, Math.floor(length / k))).map(b => b.high))) / 2;
+            return (kijun + conversion) / 2;
+        default: return sma({ period: length, values: values }).at(-1);
     }
 };
 
-// Function to calculate Average True Range (ATR)
-const atr = (klines, period, smoothingType) => {
-    if (klines.length < period) return NaN;
-    const trs = klines.slice(1).map((k, i) =>
-        Math.max(k.high - k.low, Math.abs(k.high - klines[i].close), Math.abs(k.low - klines[i].close))
-    );
-    return movingAverage(trs, period, smoothingType);
-};
-
-// Function to calculate SSL1 indicator
-const ssl1 = (klines, length, maType) => {
+const atr = (klines, length, smoothing) => {
+    if (klines.length < length + 1) return NaN;
     const high = klines.map(k => k.high);
     const low = klines.map(k => k.low);
     const close = klines.map(k => k.close);
-
-    const ssl1_emaHigh = movingAverage(high, length, maType);
-    const ssl1_emaLow = movingAverage(low, length, maType);
-
-    if (isNaN(ssl1_emaHigh) || isNaN(ssl1_emaLow)) return { ssl1Line: NaN, hlv: 0 };
-    
-    const hlv = close.at(-1) > ssl1_emaHigh ? 1 : close.at(-1) < ssl1_emaLow ? -1 : 0;
-    return { ssl1Line: hlv < 0 ? ssl1_emaHigh : ssl1_emaLow, hlv };
+    const tr = [];
+    for (let i = 1; i < klines.length; i++) {
+        tr.push(Math.max(high[i] - low[i], Math.abs(high[i] - close[i-1]), Math.abs(low[i] - close[i-1])));
+    }
+    const trueRange = tr;
+    const values = trueRange.slice(-length);
+    switch (smoothing) {
+        case 'RMA': return rma({ period: length, values: values }).at(-1);
+        case 'SMA': return sma({ period: length, values: values }).at(-1);
+        case 'EMA': return ema({ period: length, values: values }).at(-1);
+        case 'WMA': return wma({ period: length, values: values }).at(-1);
+        default: return sma({ period: length, values: values }).at(-1);
+    }
 };
 
+const crossover = (series1, series2) => {
+    if (series1.length < 2 || series2.length < 2) return false;
+    return series1.at(-2) <= series2.at(-2) && series1.at(-1) > series2.at(-1);
+};
+
+const crossunder = (series1, series2) => {
+    if (series1.length < 2 || series2.length < 2) return false;
+    return series1.at(-2) >= series2.at(-2) && series1.at(-1) < series2.at(-1);
+};
+
+
 // =========================================================================================
-// STRATEGY CLASS - This class manages the state like position and consecutive bar counts.
+// STRATEGY CLASS
+// All logic from strategy.js is moved here.
 // =========================================================================================
 class SSLHybridStrategy {
-    constructor(initialKlines, params) {
-        this.klines = [...initialKlines];
-        this.params = params;
-        this.consecutive_closes_above_entry_target = 0;
-        this.consecutive_closes_below_entry_target = 0;
-        this.currentPosition = 'none';
-        this.longEntryPrice = null;
-        this.longEntryBarIndex = null;
-        this.shortEntryPrice = null;
-        this.shortEntryBarIndex = null;
+    constructor(cfg) {
+        this.cfg = cfg;
+        this.klines = [];
+        this.position = 'none';
+        this.lastHlv = 0;
+        this.lastSSL1Line = NaN;
     }
 
-    addBar(newBar) {
+    onNewBar(newBar) {
         this.klines.push(newBar);
-        if (this.klines.length > 1000) {
+        if (this.klines.length > this.cfg.LEN * 2) {
             this.klines.shift();
         }
+
+        if (this.klines.length < this.cfg.LEN) {
+            return { buy: false, sell: false };
+        }
+
+        return this.computeSignals();
     }
 
     computeSignals() {
-        if (this.klines.length < Math.max(this.params.LEN, this.params.ATR_LEN)) {
-            return { type: 'none', message: 'Not enough data' };
-        }
-
-        const lastBar = this.klines.at(-1);
-        const currentBarIndex = this.klines.length - 1;
         const closePrices = this.klines.map(k => k.close);
+        const highPrices = this.klines.map(k => k.high);
+        const lowPrices = this.klines.map(k => k.low);
+
+        const lastClose = closePrices.at(-1);
+
+        const baseline = movingAverage(closePrices, this.cfg.LEN, this.cfg.MA_TYPE, this.cfg.KIDIV);
+        const atrValue = atr(this.klines, this.cfg.ATR_LEN, this.cfg.ATR_SMOOTHING);
+
+        const bbmcUpperATR = baseline + atrValue * this.cfg.ATR_MULT;
+        const bbmcLowerATR = baseline - atrValue * this.cfg.ATR_MULT;
+
+        const ssl1EmaHigh = movingAverage(highPrices, this.cfg.LEN, this.cfg.MA_TYPE, this.cfg.KIDIV);
+        const ssl1EmaLow = movingAverage(lowPrices, this.cfg.LEN, this.cfg.MA_TYPE, this.cfg.KIDIV);
         
-        // Calculate indicators
-        const sourcePrices = this.params.BASELINE_SOURCE === 'close' ? closePrices
-            : this.params.BASELINE_SOURCE === 'open' ? this.klines.map(k => k.open)
-            : this.params.BASELINE_SOURCE === 'high' ? this.klines.map(k => k.high)
-            : this.klines.map(k => k.low);
+        const currentHlv = lastClose > ssl1EmaHigh ? 1 : lastClose < ssl1EmaLow ? -1 : this.lastHlv;
+        const ssl1Line = currentHlv < 0 ? ssl1EmaHigh : ssl1EmaLow;
 
-        const baseline = movingAverage(sourcePrices, this.params.LEN, this.params.MA_TYPE);
-        const atrValue = atr(this.klines, this.params.ATR_LEN, this.params.ATR_SMOOTHING);
-        const bbmcUpperATR = baseline + atrValue * this.params.ATR_MULT;
-        const bbmcLowerATR = baseline - atrValue * this.params.ATR_MULT;
-        const ssl1Result = ssl1(this.klines, this.params.LEN, this.params.MA_TYPE);
+        this.lastHlv = currentHlv;
         
-        // Check for stop-loss and exit signals first
-        if (this.currentPosition === 'long' && this.params.USE_STOPLOSS_AL && this.longEntryPrice !== null) {
-            const stopLossPrice = this.longEntryPrice * (1 - this.params.STOPLOSS_AL_PERCENT / 100);
-            if (currentBarIndex >= this.longEntryBarIndex + this.params.STOPLOSS_AL_ACTIVATION_BARS && lastBar.close <= stopLossPrice) {
-                return { type: 'close', message: `POZISYON KAPAT: Uzun SL (${this.params.STOPLOSS_AL_PERCENT}% düşüş)` };
-            }
-        } else if (this.currentPosition === 'short' && this.params.USE_STOPLOSS_SAT && this.shortEntryPrice !== null) {
-            const stopLossPrice = this.shortEntryPrice * (1 + this.params.STOPLOSS_SAT_PERCENT / 100);
-            if (currentBarIndex >= this.shortEntryBarIndex + this.params.STOPLOSS_SAT_ACTIVATION_BARS && lastBar.close >= stopLossPrice) {
-                return { type: 'close', message: `POZISYON KAPAT: Kısa SL (${this.params.STOPLOSS_SAT_PERCENT}% yükseliş)` };
-            }
-        }
-
-        let entryAction = { type: 'none', message: '' };
-
-        // Update consecutive counter
-        if (lastBar.close > bbmcUpperATR) {
-            this.consecutive_closes_above_entry_target++;
-            this.consecutive_closes_below_entry_target = 0;
-        } else if (lastBar.close < bbmcLowerATR) {
-            this.consecutive_closes_below_entry_target++;
-            this.consecutive_closes_above_entry_target = 0;
-        } else {
-            this.consecutive_closes_above_entry_target = 0;
-            this.consecutive_closes_below_entry_target = 0;
-        }
-
-        // Entry conditions
-        const longCondition = this.consecutive_closes_above_entry_target === this.params.M_BARS_BUY && this.params.M_BARS_BUY > 0;
-        const shortCondition = this.consecutive_closes_below_entry_target === this.params.N_BARS_SELL && this.params.N_BARS_SELL > 0;
-
-        if (longCondition && this.currentPosition !== 'long') {
-            entryAction = { type: 'long', message: `AL: ${this.params.M_BARS_BUY} bar BBMC+ATR üstü` };
-        } else if (shortCondition && this.currentPosition !== 'short') {
-            entryAction = { type: 'short', message: `SAT: ${this.params.N_BARS_SELL} bar BBMC+ATR altı` };
-        }
-
-        // SSL1 check if BBMC doesn't provide a signal
-        if (entryAction.type === 'none' && this.params.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
-            const hlv = ssl1Result.hlv;
-            if (hlv === 1 && this.currentPosition !== 'long') {
-                entryAction = { type: 'long', message: 'AL: SSL1 Kesişimi (Yükseliş)' };
-            } else if (hlv === -1 && this.currentPosition !== 'short') {
-                entryAction = { type: 'short', message: 'SAT: SSL1 Kesişimi (Düşüş)' };
-            }
+        let buySignal = false;
+        let sellSignal = false;
+        
+        if (this.cfg.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
+            const consecutiveClosesAbove = closePrices.slice(-this.cfg.M_BARS_BUY).every(c => c > bbmcUpperATR);
+            const consecutiveClosesBelow = closePrices.slice(-this.cfg.N_BARS_SELL).every(c => c < bbmcLowerATR);
+            buySignal = consecutiveClosesAbove;
+            sellSignal = consecutiveClosesBelow;
+        } else if (this.cfg.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
+            buySignal = crossover(closePrices, [this.lastSSL1Line, ssl1Line]);
+            sellSignal = crossunder(closePrices, [this.lastSSL1Line, ssl1Line]);
         }
         
-        // Update position based on entry action
-        if (entryAction.type === 'long') {
-            this.currentPosition = 'long';
-            this.longEntryPrice = lastBar.close;
-            this.longEntryBarIndex = currentBarIndex;
-            this.shortEntryPrice = null;
-            this.shortEntryBarIndex = null;
-        } else if (entryAction.type === 'short') {
-            this.currentPosition = 'short';
-            this.shortEntryPrice = lastBar.close;
-            this.shortEntryBarIndex = currentBarIndex;
-            this.longEntryPrice = null;
-            this.longEntryBarIndex = null;
-        } else if (entryAction.type === 'none' && this.currentPosition !== 'none') {
-            // Check for cross-over signals that close a position
-            if (this.currentPosition === 'long' && lastBar.close < bbmcUpperATR) {
-                entryAction = { type: 'close', message: 'POZISYON KAPAT: Yükseliş trendi sonu' };
-                this.currentPosition = 'none';
-            } else if (this.currentPosition === 'short' && lastBar.close > bbmcLowerATR) {
-                entryAction = { type: 'close', message: 'POZISYON KAPAT: Düşüş trendi sonu' };
-                this.currentPosition = 'none';
-            }
-        }
+        this.lastSSL1Line = ssl1Line;
         
-        return entryAction;
-    }
-
-    run() {
-        if (this.klines.length < Math.max(this.params.LEN, this.params.ATR_LEN)) {
-            return [];
-        }
-
-        const signals = [];
-        // Simulate trading bar by bar
-        for (let i = 0; i < this.klines.length; i++) {
-            // No need to pass all historical data to computeSignals,
-            // the class itself holds the necessary data.
-            const signal = this.computeSignals();
-            if (signal.type !== 'none') {
-                signals.push({
-                    bar: i + 1,
-                    type: signal.type,
-                    message: signal.message,
-                    price: this.klines[i].close
-                });
-            }
-        }
-        return signals;
+        return { buy: buySignal, sell: sellSignal };
     }
 }
 
 // =========================================================================================
-// MAIN BOT LOGIC
+// MAIN SERVER LOGIC
 // =========================================================================================
-let client = null;
-let isSimulationMode = false;
-// Check if API keys are provided and not just empty strings
-if (CFG.BINANCE_API_KEY && CFG.BINANCE_SECRET_KEY && CFG.BINANCE_API_KEY.trim().length > 0 && CFG.BINANCE_SECRET_KEY.trim().length > 0) {
-    client = Binance({
-        apiKey: CFG.BINANCE_API_KEY,
-        apiSecret: CFG.BINANCE_SECRET_KEY,
-    });
-    console.log("Binance client initialized with provided API keys. Bot will run in live mode.");
-    isSimulationMode = false;
-} else {
-    console.log("No valid Binance API keys found. Bot will run in simulation mode.");
-    isSimulationMode = true;
-}
-
-
-// Global variable to store the bot's current position
-let botCurrentPosition = 'none';
-let klines = [];
-let strategyInstance = null;
+const client = Binance({
+    apiKey: CFG.BINANCE_API_KEY,
+    apiSecret: CFG.BINANCE_SECRET_KEY,
+});
 
 async function sendTelegramMessage(token, chatId, message) {
     if (!token || !chatId) return;
@@ -256,133 +184,44 @@ async function sendTelegramMessage(token, chatId, message) {
         await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: message })
+            body: JSON.stringify({
+                chat_id: chatId,
+                text: message
+            })
         });
-        console.log("Telegram message sent successfully.");
-    } catch (err) {
-        console.error("Failed to send Telegram message:", err.message);
-    }
-}
-
-async function getBalance() {
-    if (isSimulationMode) {
-        console.log('Bot is in simulation mode. Skipping balance check.');
-        return 1000; // Default balance for simulation
-    }
-    try {
-        const balanceResponse = await client.futuresBalance();
-        const usdtBalance = balanceResponse.find(b => b.asset === 'USDT');
-        if (usdtBalance) {
-            return parseFloat(usdtBalance.availableBalance);
-        }
     } catch (error) {
-        console.error('Error fetching balance:', error.message);
+        console.error('Error sending Telegram message:', error);
     }
-    return 0;
 }
 
-async function placeOrder(side, message) {
-    const intendedPosition = side === 'BUY' ? 'long' : (side === 'SELL' ? 'short' : 'none');
-
-    if (isSimulationMode) {
-        console.log(`Bot is in simulation mode. Simulated order: ${side} - Message: ${message}`);
-        botCurrentPosition = intendedPosition;
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Simulated Order: ${side}`);
-        return;
-    }
-    
+async function placeOrder(side, size) {
     try {
-        const balance = await getBalance();
-        if (balance > 0) {
-            const tradeSizeUSDT = balance * (CFG.TRADE_SIZE_PERCENT / 100);
-            const lastBar = klines.at(-1);
-            if (!lastBar) {
-                console.error("No recent bar data to calculate trade size.");
-                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: No recent bar data.');
-                return;
-            }
-            const symbolPrice = lastBar.close;
-            let quantity = tradeSizeUSDT / symbolPrice;
-
-            // If reversing a position, double the quantity
-            if ((side === 'BUY' && botCurrentPosition === 'short') || (side === 'SELL' && botCurrentPosition === 'long')) {
-                // Double the quantity to close the current position and open a new one
-                quantity *= 2; 
-            }
-
-            if (quantity <= 0) {
-                console.error("Calculated quantity is zero or less. Not placing order.");
-                sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: Calculated quantity is zero or less.');
-                return;
-            }
-
-            console.log(`Attempting real order placement: ${side} - Quantity: ${quantity} - Message: ${message}`);
-            
-            // The actual Binance API call should be made here
-            // const orderResponse = await client.futuresOrder(...)
-
-            // Update bot position state on successful attempt
-            botCurrentPosition = intendedPosition;
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `📊 Order placed: ${side} ${quantity.toFixed(4)} ${CFG.SYMBOL}`);
-        } else {
-            console.log('Insufficient balance to place an order.');
-            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, '❌ Order failed: Insufficient balance.');
-        }
+        const order = await client.order({
+            symbol: CFG.SYMBOL,
+            side: side,
+            quantity: size,
+            type: 'MARKET'
+        });
+        console.log(`${side} order placed:`, order);
+        return order;
     } catch (error) {
-        console.error('Error placing order:', error.message);
-        sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `❌ Order Error: ${error.message}`);
+        console.error('Error placing order:', error);
+        return null;
     }
 }
 
-async function initializeBot() {
-    console.log(`Fetching historical data for ${CFG.SYMBOL}, interval ${CFG.INTERVAL}`);
-    try {
-        const response = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${CFG.SYMBOL.toUpperCase()}&interval=${CFG.INTERVAL}&limit=1000`);
-        const data = await response.json();
-        klines = data.map(d => ({
-            open: parseFloat(d[1]),
-            high: parseFloat(d[2]),
-            low: parseFloat(d[3]),
-            close: parseFloat(d[4]),
-            volume: parseFloat(d[5]),
-            closeTime: d[6]
-        }));
-        console.log(`${klines.length} historical candles loaded.`);
+const strategy = new SSLHybridStrategy(CFG);
 
-        if (klines.length > 0) {
-            const historicalStrategy = new SSLHybridStrategy(klines, CFG);
-            const historicalSignals = historicalStrategy.run();
-            const lastSignal = historicalSignals.filter(s => s.type === 'long' || s.type === 'short' || s.type === 'close').at(-1);
+const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
-            if (lastSignal) {
-                if (lastSignal.type === 'long') botCurrentPosition = 'long';
-                else if (lastSignal.type === 'short') botCurrentPosition = 'short';
-                else if (lastSignal.type === 'close') botCurrentPosition = 'none';
-            }
-            
-            console.log(`Bot initialized. Historical analysis complete. Current position is: ${botCurrentPosition.toUpperCase()}`);
-
-            strategyInstance = new SSLHybridStrategy(klines, CFG);
-        }
-
-    } catch (error) {
-        console.error('Error initializing bot:', error.message);
-        klines = [];
-    }
-}
-
-const ws = new WebSocket(`wss://fstream.binance.com/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
-
-ws.on('open', async () => {
-    console.log('WebSocket connection opened.');
-    await initializeBot();
+ws.on('open', () => {
+    console.log('✅ WebSocket connection established.');
 });
 
 ws.on('message', async (data) => {
-    const klineData = JSON.parse(data.toString());
-    const kline = klineData.k;
-
-    if (kline.x) {
+    const event = JSON.parse(data);
+    const kline = event.k;
+    if (kline.x) { // Candle close
         const newBar = {
             open: parseFloat(kline.o),
             high: parseFloat(kline.h),
@@ -391,23 +230,19 @@ ws.on('message', async (data) => {
             volume: parseFloat(kline.v),
             closeTime: kline.T
         };
-        
-        if (!strategyInstance) {
-            console.log("Strategy not initialized yet. Skipping bar.");
-            return;
-        }
 
-        strategyInstance.addBar(newBar);
-        const signal = strategyInstance.computeSignals();
-        
-        console.log(`New candle received. Close price: ${newBar.close}. Detected signal: ${signal.type}`);
+        const signals = strategy.onNewBar(newBar);
+        const barTime = new Date(newBar.closeTime).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul' });
+        console.log(`New bar data received. Bar Time: ${barTime}, Close Price: ${newBar.close}`);
 
-        if (signal.type === 'long' && botCurrentPosition !== 'long') {
-            await placeOrder('BUY', signal.message);
-        } else if (signal.type === 'short' && botCurrentPosition !== 'short') {
-            await placeOrder('SELL', signal.message);
-        } else if (signal.type === 'close' && botCurrentPosition !== 'none') {
-             await placeOrder(botCurrentPosition === 'long' ? 'SELL' : 'BUY', signal.message);
+        if (signals.buy) {
+            console.log(`--- BUY Signal Triggered! ---`);
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `AL sinyali geldi! Fiyat: ${newBar.close}`);
+            await placeOrder('BUY', CFG.TRADE_SIZE);
+        } else if (signals.sell) {
+            console.log(`--- SELL Signal Triggered! ---`);
+            sendTelegramMessage(CFG.TG_TOKEN, CFG.TG_CHAT_ID, `SAT sinyali geldi! Fiyat: ${newBar.close}`);
+            await placeOrder('SELL', CFG.TRADE_SIZE);
         }
     }
 });
@@ -415,18 +250,10 @@ ws.on('message', async (data) => {
 ws.on('close', () => {
     console.log('❌ WebSocket connection closed. Reconnecting...');
     setTimeout(() => {
-        // Reconnection logic can be added here
+        // Reconnection logic can go here
     }, 5000);
 });
 
-ws.on('error', (error) => {
-    console.error('WebSocket error:', error.message);
-});
-
-app.get('/', (req, res) => {
-    res.send('Bot is running!');
-});
-
 app.listen(PORT, () => {
-    console.log(`Server listening at http://localhost:${PORT}`);
+    console.log(`Server is running on port ${PORT}.`);
 });
