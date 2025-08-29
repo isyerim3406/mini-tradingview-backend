@@ -2,8 +2,9 @@ import WebSocket from 'ws';
 import dotenv from 'dotenv';
 import express from 'express';
 import fetch from 'node-fetch';
-// Binance API'yi doğru şekilde içe aktarıyoruz.
-import { Binance } from 'binance-api-node';
+// Binance API'yi Node.js'in önerdiği şekilde doğru olarak içe aktarıyoruz.
+import pkg from 'binance-api-node';
+const Binance = pkg.default || pkg;
 
 dotenv.config();
 
@@ -112,7 +113,7 @@ function getATR(highs, lows, closes, length, smoothing) {
     const trs = highs.map((high, i) => Math.max(high - lows[i], Math.abs(high - closes[i - 1] || 0), Math.abs(lows[i] - closes[i - 1] || 0)));
     if (smoothing === 'RMA') {
         const rma = getRMA(trs, length);
-        return rma[rma.length - 1];
+        return rma.length > 0 ? rma[rma.length - 1] : 0;
     } else {
         const atr = getMovingAverage(trs, length, 'SMA');
         return atr.length > 0 ? atr[0] : 0;
@@ -120,8 +121,8 @@ function getATR(highs, lows, closes, length, smoothing) {
 }
 
 function getSSL1Line(klines, length, maType, kidiv) {
-    const maHighs = klines.map(k => getMovingAverage(klines.slice(0, klines.indexOf(k) + 1).map(c => c.high), length, maType)[0] || k.high);
-    const maLows = klines.map(k => getMovingAverage(klines.slice(0, klines.indexOf(k) + 1).map(c => c.low), length, maType)[0] || k.low);
+    const maHighs = klines.map((k, i) => getMovingAverage(klines.slice(0, i + 1).map(c => c.high), length, maType)[0] || k.high);
+    const maLows = klines.map((k, i) => getMovingAverage(klines.slice(0, i + 1).map(c => c.low), length, maType)[0] || k.low);
 
     let hlv = [];
     for (let i = 0; i < klines.length; i++) {
