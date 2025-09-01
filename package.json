@@ -1,20 +1,33 @@
 {
-  "name": "mini-tradingview-backend",
+  "name": "bbmc-atr-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "BBMC+ATR Bands Strategy Trading Bot for Binance Futures",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "axios": "^1.6.8",
     "dotenv": "^16.4.5",
-    "telegraf": "^4.16.2",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.1",
     "technicalindicators": "^3.1.0",
-    "ws": "^8.17.0"
-  }
+    "ws": "^8.17.0",
+    "binance-api-node": "^0.12.0",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "keywords": [
+    "trading",
+    "bot",
+    "binance",
+    "futures",
+    "bbmc",
+    "atr"
+  ],
+  "author": "",
+  "license": "ISC"
 }
