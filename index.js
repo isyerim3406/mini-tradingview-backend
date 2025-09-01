@@ -14,29 +14,32 @@ const PORT = process.env.PORT || 3000;
 // STRATEGY CONFIGURATION
 // =========================================================================================
 const CFG = {
-    USE_STOPLOSS_AL: true,
-    STOPLOSS_AL_PERCENT: 1.4,
-    STOPLOSS_AL_ACTIVATION_BARS: 1,
-    USE_STOPLOSS_SAT: true,
-    STOPLOSS_SAT_PERCENT: 1.3,
-    STOPLOSS_SAT_ACTIVATION_BARS: 1,
-    LEN: 164,
-    ATR_LEN: 14,
-    ATR_MULT: 3.2,
-    ATR_SMOOTHING: 'SMA',
-    MA_TYPE: 'SMA',
-    BASELINE_SOURCE: 'close',
-    ENTRY_SIGNAL_TYPE: 'BBMC+ATR Bands',
-    M_BARS_BUY: 1,
-    N_BARS_SELL: 3,
-    KIDIV: 1,
+    // --- Trading Settings ---
     TRADE_SIZE_PERCENT: 100,
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
-    INTERVAL: process.env.INTERVAL || '1m',
+    INTERVAL: process.env.INTERVAL || '3m',
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     IS_TESTNET: process.env.IS_TESTNET === 'true',
     INITIAL_CAPITAL: 100,
+
+    // --- MACD Settings (Pine Script'ten gelen) ---
+    fastLength: 12,
+    slowLength: 26,
+    signalLength: 9,
+    adxThreshold: 20.0,
+    macdFilterEnabled: true,
+    len: 5,
+
+    // --- HH/LH/LL/HL Filters (Pine Script'ten gelen, Flip özelliği eklendi) ---
+    exitLongOnLH: true,
+    flipToShortOnLH: false,
+    exitShortOnHH: true,
+    flipToLongOnHH: false,
+    exitLongOnLL: false,
+    flipToShortOnLL: false,
+    exitShortOnHL: false,
+    flipToLongOnHL: false,
 };
 
 // =========================================================================================
@@ -57,7 +60,6 @@ const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SE
 // Simülasyon modu için sahte bir Binance istemcisi oluşturma
 const mockBinanceClient = {
     futuresAccountBalance: async () => {
-        // Mock verisi döndür
         return [{ asset: 'USDT', availableBalance: '1000' }];
     },
     futuresMarketOrder: async ({ side, quantity }) => {
@@ -65,7 +67,6 @@ const mockBinanceClient = {
         return { status: 'FILLED' };
     },
     candles: async ({ symbol, interval, limit }) => {
-        // Simülasyon modunda sembol için sahte mum verileri üret
         const mockCandles = [];
         let price = 4300;
         let now = Date.now();
@@ -126,63 +127,77 @@ async function sendTelegramMessage(text) {
 }
 
 // =========================================================================================
-// TECHNICAL INDICATORS
+// TECHNICAL INDICATORS (PINE SCRIPT TRANSLATION)
 // =========================================================================================
-function getMovingAverage(series, length, maType) {
+function getEMA(series, length) {
     if (series.length < length) {
         return [];
     }
-    const subSeries = series.slice(-length);
-    const sum = subSeries.reduce((acc, val) => acc + val, 0);
-    const ma = sum / length;
-    return [ma];
+    let ema = [];
+    let alpha = 2 / (length + 1);
+    ema.push(series[0]); // Initial value is the first data point
+    for (let i = 1; i < series.length; i++) {
+        let prevEma = ema[i - 1] !== undefined ? ema[i - 1] : series[i];
+        let newEma = alpha * series[i] + (1 - alpha) * prevEma;
+        ema.push(newEma);
+    }
+    return ema;
+}
+
+function getSMA(series, length) {
+    if (series.length < length) {
+        return [];
+    }
+    let sma = [];
+    for (let i = length - 1; i < series.length; i++) {
+        const subSeries = series.slice(i - length + 1, i + 1);
+        const sum = subSeries.reduce((acc, val) => acc + val, 0);
+        sma.push(sum / length);
+    }
+    return sma;
+}
+
+function getADX(highs, lows, closes, length) {
+    if (highs.length < length + 1) {
+        return { adx: 0, plusDI: 0, minusDI: 0 };
+    }
+
+    const tr = [];
+    const plusDM = [];
+    const minusDM = [];
+    for (let i = 1; i < highs.length; i++) {
+        let h = highs[i], l = lows[i], prevC = closes[i - 1];
+        tr.push(Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC)));
+        plusDM.push(h - highs[i - 1] > lows[i - 1] - l ? Math.max(h - highs[i - 1], 0) : 0);
+        minusDM.push(lows[i - 1] - l > h - highs[i - 1] ? Math.max(lows[i - 1] - l, 0) : 0);
+    }
+
+    const rmaTR = getRMA(tr, length);
+    const rmaPlusDM = getRMA(plusDM, length);
+    const rmaMinusDM = getRMA(minusDM, length);
+
+    const plusDI = rmaPlusDM.map((val, i) => (val / rmaTR[i]) * 100);
+    const minusDI = rmaMinusDM.map((val, i) => (val / rmaTR[i]) * 100);
+
+    const dx = plusDI.map((val, i) => Math.abs(val - minusDI[i]) / (val + minusDI[i]) * 100);
+    const adx = getRMA(dx, length);
+
+    return {
+        adx: adx.length > 0 ? adx[adx.length - 1] : 0,
+        plusDI: plusDI.length > 0 ? plusDI[plusDI.length - 1] : 0,
+        minusDI: minusDI.length > 0 ? minusDI[minusDI.length - 1] : 0,
+    };
 }
 
 function getRMA(series, length) {
-    if (series.length < length) {
-        return [];
-    }
     let rma = [series[0]];
     let alpha = 1 / length;
     for (let i = 1; i < series.length; i++) {
-        let prevRma = rma[i - 1] || series[i];
+        let prevRma = rma[i - 1] !== undefined ? rma[i - 1] : series[i];
         let newRma = alpha * series[i] + (1 - alpha) * prevRma;
         rma.push(newRma);
     }
     return rma;
-}
-
-function getATR(highs, lows, closes, length, smoothing) {
-    const trs = highs.map((high, i) => Math.max(high - lows[i], Math.abs(high - closes[i - 1] || 0), Math.abs(lows[i] - closes[i - 1] || 0)));
-    if (smoothing === 'RMA') {
-        const rma = getRMA(trs, length);
-        return rma.length > 0 ? rma[rma.length - 1] : 0;
-    } else {
-        const atr = getMovingAverage(trs, length, 'SMA');
-        return atr.length > 0 ? atr[0] : 0;
-    }
-}
-
-function getSSL1Line(klines, length, maType, kidiv) {
-    const maHighs = klines.map((k, i) => getMovingAverage(klines.slice(0, i + 1).map(c => c.high), length, maType)[0] || k.high);
-    const maLows = klines.map((k, i) => getMovingAverage(klines.slice(0, i + 1).map(c => c.low), length, maType)[0] || k.low);
-
-    let hlv = [];
-    for (let i = 0; i < klines.length; i++) {
-        if (klines[i].close > maHighs[i]) {
-            hlv.push(1);
-        } else if (klines[i].close < maLows[i]) {
-            hlv.push(-1);
-        } else {
-            hlv.push(hlv.length > 0 ? hlv[hlv.length - 1] : 0);
-        }
-    }
-    
-    let ssl1Line = [];
-    for (let i = 0; i < klines.length; i++) {
-        ssl1Line.push(hlv[i] === -1 ? maHighs[i] : maLows[i]);
-    }
-    return ssl1Line;
 }
 
 function cross(series1, series2) {
@@ -192,66 +207,84 @@ function cross(series1, series2) {
 
 function crossunder(series1, series2) {
     if (series1.length < 2 || series2.length < 2) return false;
-    return series1[series1.length - 2] > series2[series2.length - 2] && series1[series1.length - 1] < series2[series2.length - 1];
+    return series1[series1.length - 2] > series2[series2.length - 2] && series1[series2.length - 1] < series2[series2.length - 1];
 }
 
 // =========================================================================================
-// MAIN STRATEGY
+// MAIN STRATEGY LOGIC
 // =========================================================================================
 function computeSignals() {
-    if (klines.length < Math.max(CFG.LEN, CFG.ATR_LEN) + 1) {
+    // --- Yetersiz veri kontrolü ---
+    if (klines.length < Math.max(CFG.slowLength, CFG.signalLength, CFG.len, 14) + 1) {
         return { type: 'none', message: 'Yetersiz veri' };
     }
 
     const closePrices = klines.map(k => k.close);
     const highPrices = klines.map(k => k.high);
     const lowPrices = klines.map(k => k.low);
-    const lastClose = closePrices[closePrices.length - 1];
     const lastBarIndex = klines.length - 1;
 
-    // --- STOP LOSS CHECK ---
-    if (botCurrentPosition === 'long' && CFG.USE_STOPLOSS_AL && longEntryPrice !== null) {
-        const stopLossLevel = longEntryPrice * (1 - CFG.STOPLOSS_AL_PERCENT / 100);
-        const barsSinceEntry = lastBarIndex - longEntryBarIndex;
-        if (barsSinceEntry >= CFG.STOPLOSS_AL_ACTIVATION_BARS && lastClose <= stopLossLevel) {
-            return { type: 'flip_short', message: 'UZUN POZISYON SL VURDU. SAT' };
+    // --- Gösterge Hesaplamaları ---
+    const macdSeries = getEMA(closePrices, CFG.fastLength).map((emaFast, i) => emaFast - getEMA(closePrices, CFG.slowLength)[i]);
+    const signalSeries = getSMA(macdSeries, CFG.signalLength);
+    const adxResult = getADX(highPrices, lowPrices, closePrices, 14);
+    const adxFilter = adxResult.adx > CFG.adxThreshold;
+
+    const lastMacd = macdSeries[macdSeries.length - 1];
+    const lastSignal = signalSeries[signalSeries.length - 1];
+
+    // --- HH/LH/LL/HL Tespiti (Pine Script'teki mantığın çevirisi) ---
+    const macdHigh = Math.max(...macdSeries.slice(-CFG.len));
+    const macdLow = Math.min(...macdSeries.slice(-CFG.len));
+    
+    const lhDetected = macdSeries[macdSeries.length - 2] < macdSeries[macdSeries.length - 3] && macdSeries[macdSeries.length - 3] > macdSeries[macdSeries.length - 4] && macdSeries[macdSeries.length - 3] < macdHigh;
+    const hhDetected = macdSeries[macdSeries.length - 2] > macdSeries[macdSeries.length - 3] && macdSeries[macdSeries.length - 3] < macdSeries[macdSeries.length - 4] && macdSeries[macdSeries.length - 3] > macdLow;
+    // LL ve HL için Pine Script mantığı, son 3 barı ve geçmiş `len` barı kullanır.
+    const llDetected = macdSeries[macdSeries.length-2] > macdSeries[macdSeries.length-3] && macdSeries[macdSeries.length-3] < macdSeries[macdSeries.length-4] && macdSeries[macdSeries.length-3] < macdLow;
+    const hlDetected = macdSeries[macdSeries.length-2] > macdSeries[macdSeries.length-3] && macdSeries[macdSeries.length-3] < macdSeries[macdSeries.length-4] && macdSeries[macdSeries.length-3] > macdLow;
+
+    // --- Filtrelere göre pozisyon kapatma veya tersine çevirme ---
+    if (CFG.macdFilterEnabled) {
+        if (botCurrentPosition === 'long' && lhDetected) {
+            if (CFG.flipToShortOnLH) {
+                return { type: 'flip_short', message: "LH tespiti: Pozisyonu tersine çevir" };
+            } else if (CFG.exitLongOnLH) {
+                return { type: 'short', message: "LH tespiti: Uzun pozisyonu kapat" };
+            }
+        }
+        if (botCurrentPosition === 'short' && hhDetected) {
+            if (CFG.flipToLongOnHH) {
+                return { type: 'flip_long', message: "HH tespiti: Pozisyonu tersine çevir" };
+            } else if (CFG.exitShortOnHH) {
+                return { type: 'long', message: "HH tespiti: Kısa pozisyonu kapat" };
+            }
+        }
+        if (botCurrentPosition === 'long' && llDetected) {
+            if (CFG.flipToShortOnLL) {
+                return { type: 'flip_short', message: "LL tespiti: Pozisyonu tersine çevir" };
+            } else if (CFG.exitLongOnLL) {
+                return { type: 'short', message: "LL tespiti: Uzun pozisyonu kapat" };
+            }
+        }
+        if (botCurrentPosition === 'short' && hlDetected) {
+            if (CFG.flipToLongOnHL) {
+                return { type: 'flip_long', message: "HL tespiti: Pozisyonu tersine çevir" };
+            } else if (CFG.exitShortOnHL) {
+                return { type: 'long', message: "HL tespiti: Kısa pozisyonu kapat" };
+            }
         }
     }
 
-    if (botCurrentPosition === 'short' && CFG.USE_STOPLOSS_SAT && shortEntryPrice !== null) {
-        const stopLossLevel = shortEntryPrice * (1 + CFG.STOPLOSS_SAT_PERCENT / 100);
-        const barsSinceEntry = lastBarIndex - shortEntryBarIndex;
-        if (barsSinceEntry >= CFG.STOPLOSS_SAT_ACTIVATION_BARS && lastClose >= stopLossLevel) {
-            return { type: 'flip_long', message: 'KISA POZISYON SL VURDU. AL' };
+    // --- Normal Giriş Şartları ---
+    if (cross(macdSeries, signalSeries) && adxFilter) {
+        if (botCurrentPosition !== 'long') {
+            return { type: 'long', message: "AL sinyali: MACD/Sinyal kesişimi ve ADX Filtresi" };
         }
     }
-
-    // --- ENTRY SIGNAL CHECK ---
-    const atrValue = getATR(highPrices, lowPrices, closePrices, CFG.ATR_LEN, CFG.ATR_SMOOTHING);
-    const baseLine = getMovingAverage(closePrices, CFG.LEN, CFG.MA_TYPE);
-    const bbmcUpper = baseLine[0] + (atrValue * CFG.ATR_MULT);
-    const bbmcLower = baseLine[0] - (atrValue * CFG.ATR_MULT);
-    const ssl1Line = getSSL1Line(klines, CFG.LEN, CFG.MA_TYPE, CFG.KIDIV);
-
-    if (CFG.ENTRY_SIGNAL_TYPE === "BBMC+ATR Bands") {
-        const consecutiveAbove = closePrices.slice(-CFG.M_BARS_BUY).every(c => c > bbmcUpper);
-        const consecutiveBelow = closePrices.slice(-CFG.N_BARS_SELL).every(c => c < bbmcLower);
-
-        if (consecutiveAbove && botCurrentPosition !== 'long') {
-            return { type: 'long', message: "AL sinyali: BBMC+ATR bands üzeri" };
-        }
-        if (consecutiveBelow && botCurrentPosition !== 'short') {
-            return { type: 'short', message: "SAT sinyali: BBMC+ATR bands altı" };
-        }
-    } else if (CFG.ENTRY_SIGNAL_TYPE === "SSL1 Kesişimi") {
-        const closeSeries = [closePrices[closePrices.length - 2], closePrices[closePrices.length - 1]];
-        const ssl1Series = [ssl1Line[ssl1Line.length - 2], ssl1Line[ssl1Line.length - 1]];
-
-        if (cross(closeSeries, ssl1Series) && botCurrentPosition !== 'long') {
-            return { type: 'long', message: "AL sinyali: SSL1 Kesişimi" };
-        }
-        if (crossunder(closeSeries, ssl1Series) && botCurrentPosition !== 'short') {
-            return { type: 'short', message: "SAT sinyali: SSL1 Kesişimi" };
+    
+    if (crossunder(macdSeries, signalSeries) && !adxFilter) {
+        if (botCurrentPosition !== 'short') {
+            return { type: 'short', message: "SAT sinyali: MACD/Sinyal kesişimi ve ADX Filtresi" };
         }
     }
 
@@ -303,7 +336,7 @@ async function placeOrder(side, signalMessage) {
     }
 
     // Yeni pozisyonu açma
-    if (botCurrentPosition === 'none') {
+    if (botCurrentPosition === 'none' || (side === 'BUY' && botCurrentPosition === 'short') || (side === 'SELL' && botCurrentPosition === 'long')) {
         try {
             const currentPrice = lastClosePrice;
             let quantity = 0;
@@ -356,8 +389,8 @@ async function fetchInitialData() {
 
         klines = initialKlines.map(k => ({
             open: parseFloat(k.open),
-            high: parseFloat(k.high),
-            low: parseFloat(k.low),
+            high: parseFloat(k.h),
+            low: parseFloat(k.l),
             close: parseFloat(k.close),
             volume: parseFloat(k.v),
             closeTime: k.closeTime
