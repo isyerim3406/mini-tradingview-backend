@@ -14,7 +14,19 @@ const PORT = process.env.PORT || 3000;
 // STRATEGY CONFIGURATION
 // =========================================================================================
 const CFG = {
-    // --- Trading Settings ---
+    // IFTSMI Strategy Parameters (Pine Script defaults)
+    SMIL: 54,
+    wmalength: 6,
+    IEMA: 5,
+    OEMA: 5,
+    level_buy: -0.5,
+    level_sell: 0.8,
+    use_filter: true,
+    atr_period: 14,
+    atr_ma_period: 100,
+    atr_threshold: 0.7,
+
+    // Bot Configuration
     TRADE_SIZE_PERCENT: 100,
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
     INTERVAL: process.env.INTERVAL || '3m',
@@ -22,24 +34,6 @@ const CFG = {
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     IS_TESTNET: process.env.IS_TESTNET === 'true',
     INITIAL_CAPITAL: 100,
-
-    // --- MACD Settings (Pine Script'ten gelen) ---
-    fastLength: 12,
-    slowLength: 26,
-    signalLength: 9,
-    adxThreshold: 20.0,
-    macdFilterEnabled: true,
-    len: 5,
-
-    // --- HH/LH/LL/HL Filters (Pine Script'ten gelen, Flip özelliği eklendi) ---
-    exitLongOnLH: true,
-    flipToShortOnLH: false,
-    exitShortOnHH: true,
-    flipToLongOnHH: false,
-    exitLongOnLL: false,
-    flipToShortOnLL: false,
-    exitShortOnHL: false,
-    flipToLongOnHL: false,
 };
 
 // =========================================================================================
@@ -47,10 +41,6 @@ const CFG = {
 // =========================================================================================
 let botCurrentPosition = 'none';
 let klines = [];
-let longEntryPrice = null;
-let longEntryBarIndex = -1;
-let shortEntryPrice = null;
-let shortEntryBarIndex = -1;
 let totalNetProfit = 0;
 let isBotInitialized = false;
 
@@ -60,6 +50,7 @@ const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SE
 // Simülasyon modu için sahte bir Binance istemcisi oluşturma
 const mockBinanceClient = {
     futuresAccountBalance: async () => {
+        // Mock verisi döndür
         return [{ asset: 'USDT', availableBalance: '1000' }];
     },
     futuresMarketOrder: async ({ side, quantity }) => {
@@ -67,6 +58,7 @@ const mockBinanceClient = {
         return { status: 'FILLED' };
     },
     candles: async ({ symbol, interval, limit }) => {
+        // Simülasyon modunda sembol için sahte mum verileri üret
         const mockCandles = [];
         let price = 4300;
         let now = Date.now();
@@ -98,6 +90,369 @@ const binanceClient = isSimulationMode ? mockBinanceClient : Binance({
     test: CFG.IS_TESTNET,
 });
 
+// IFTSMIStrategy Class
+class IFTSMIStrategy {
+    constructor(options = {}) {
+        // Default parameters (matching Pine Script defaults)
+        this.SMIL = options.SMIL || 54;
+        this.wmalength = options.wmalength || 6;
+        this.IEMA = options.IEMA || 5;
+        this.OEMA = options.OEMA || 5;
+        this.level_buy = options.level_buy || -0.5;
+        this.level_sell = options.level_sell || 0.8;
+        
+        // Filter settings
+        this.use_filter = options.use_filter !== undefined ? options.use_filter : true;
+        this.atr_period = options.atr_period || 14;
+        this.atr_ma_period = options.atr_ma_period || 100;
+        this.atr_threshold = options.atr_threshold || 0.7;
+        
+        // Strategy settings
+        this.initial_capital = options.initial_capital || 10000;
+        this.qty_percent = options.qty_percent || 100;
+        
+        // Internal state
+        this.position_size = 0;
+        this.capital = this.initial_capital;
+        this.trades = [];
+        
+        // Data arrays for calculations
+        this.closes = [];
+        this.highs = [];
+        this.lows = [];
+        this.true_ranges = [];
+        
+        // Calculation arrays
+        this.sm_values = [];
+        this.diff_values = [];
+        this.smi_values = [];
+        this.v1_values = [];
+        this.v2_values = [];
+        this.inv_values = [];
+        this.atr_values = [];
+        this.atr_ma_values = [];
+        
+        // EMA calculation states
+        this.ema_states = {};
+    }
+    
+    // EMA calculation helper
+    calculateEMA(value, period, key) {
+        if (!this.ema_states[key]) {
+            this.ema_states[key] = {
+                values: [],
+                ema: null
+            };
+        }
+        
+        const state = this.ema_states[key];
+        state.values.push(value);
+        
+        if (state.values.length === 1) {
+            state.ema = value;
+        } else {
+            const multiplier = 2 / (period + 1);
+            state.ema = (value * multiplier) + (state.ema * (1 - multiplier));
+        }
+        
+        return state.ema;
+    }
+    
+    // SMA calculation helper
+    calculateSMA(values, period) {
+        if (values.length < period) return null;
+        const slice = values.slice(-period);
+        return slice.reduce((sum, val) => sum + val, 0) / period;
+    }
+    
+    // WMA calculation helper
+    calculateWMA(values, period) {
+        if (values.length < period) return null;
+        
+        const slice = values.slice(-period);
+        let weightedSum = 0;
+        let weightSum = 0;
+        
+        for (let i = 0; i < slice.length; i++) {
+            const weight = i + 1;
+            weightedSum += slice[i] * weight;
+            weightSum += weight;
+        }
+        
+        return weightedSum / weightSum;
+    }
+    
+    // Lowest value in period
+    getLowest(values, period) {
+        if (values.length < period) return Math.min(...values);
+        const slice = values.slice(-period);
+        return Math.min(...slice);
+    }
+    
+    // Highest value in period
+    getHighest(values, period) {
+        if (values.length < period) return Math.max(...values);
+        const slice = values.slice(-period);
+        return Math.max(...slice);
+    }
+    
+    // True Range calculation
+    calculateTrueRange(high, low, prevClose) {
+        if (prevClose === null) return high - low;
+        
+        const tr1 = high - low;
+        const tr2 = Math.abs(high - prevClose);
+        const tr3 = Math.abs(low - prevClose);
+        
+        return Math.max(tr1, tr2, tr3);
+    }
+    
+    // ATR calculation
+    calculateATR(period) {
+        if (this.true_ranges.length < period) return null;
+        return this.calculateSMA(this.true_ranges, period);
+    }
+    
+    // Check for crossover
+    checkCrossover(current, previous, level) {
+        return previous <= level && current > level;
+    }
+    
+    // Check for crossunder
+    checkCrossunder(current, previous, level) {
+        return previous >= level && current < level;
+    }
+    
+    // Process new candle data
+    processCandle(timestamp, open, high, low, close) {
+        // Store OHLC data
+        this.closes.push(close);
+        this.highs.push(high);
+        this.lows.push(low);
+        
+        // Calculate True Range
+        const prevClose = this.closes.length > 1 ? this.closes[this.closes.length - 2] : null;
+        const tr = this.calculateTrueRange(high, low, prevClose);
+        this.true_ranges.push(tr);
+        
+        // SM calculation (Stochastic Momentum)
+        const LLow = this.getLowest(this.lows, this.SMIL);
+        const HHigh = this.getHighest(this.highs, this.SMIL);
+        const SM = close - 0.5 * (HHigh + LLow);
+        this.sm_values.push(SM);
+        
+        // SMI calculations
+        const avgsm = this.calculateEMA(
+            this.calculateEMA(SM, this.IEMA, `sm_inner_${this.closes.length}`),
+            this.OEMA,
+            `sm_outer_${this.closes.length}`
+        );
+        
+        const diff = HHigh - LLow;
+        this.diff_values.push(diff);
+        
+        const avgdiff = this.calculateEMA(
+            this.calculateEMA(diff, this.IEMA, `diff_inner_${this.closes.length}`),
+            this.OEMA,
+            `diff_outer_${this.closes.length}`
+        );
+        
+        const SMI = avgdiff !== 0 ? 100 * (avgsm / (0.5 * avgdiff)) : 0;
+        this.smi_values.push(SMI);
+        
+        // Inverse Fisher Transform calculations
+        const v1 = 0.1 * SMI;
+        this.v1_values.push(v1);
+        
+        const v2 = this.calculateWMA(this.v1_values, this.wmalength);
+        this.v2_values.push(v2 || 0);
+        
+        const INV = v2 !== null ? (Math.exp(2 * v2) - 1) / (Math.exp(2 * v2) + 1) : 0;
+        this.inv_values.push(INV);
+        
+        // ATR calculations for sideways filter
+        const current_atr = this.calculateATR(this.atr_period);
+        if (current_atr !== null) {
+            this.atr_values.push(current_atr);
+        }
+        
+        const long_term_atr_ma = this.calculateSMA(this.atr_values, this.atr_ma_period);
+        if (long_term_atr_ma !== null) {
+            this.atr_ma_values.push(long_term_atr_ma);
+        }
+        
+        // Sideways market detection
+        const is_sideways = this.use_filter && 
+                           current_atr !== null && 
+                           long_term_atr_ma !== null && 
+                           (current_atr < long_term_atr_ma * this.atr_threshold);
+        
+        // Signal generation
+        let buy_condition = false;
+        let sell_condition = false;
+        
+        if (this.inv_values.length >= 2) {
+            const current_inv = this.inv_values[this.inv_values.length - 1];
+            const previous_inv = this.inv_values[this.inv_values.length - 2];
+            
+            buy_condition = this.checkCrossover(current_inv, previous_inv, this.level_buy) && !is_sideways;
+            sell_condition = this.checkCrossunder(current_inv, previous_inv, this.level_sell) && !is_sideways;
+        }
+        
+        // Execute strategy
+        const signal = this.executeStrategy(timestamp, close, buy_condition, sell_condition, INV, is_sideways);
+        
+        return {
+            timestamp,
+            close,
+            inv: INV,
+            smi: SMI,
+            buy_condition,
+            sell_condition,
+            is_sideways,
+            position_size: this.position_size,
+            signal,
+            atr: current_atr,
+            atr_ma: long_term_atr_ma
+        };
+    }
+    
+    // Strategy execution logic
+    executeStrategy(timestamp, price, buy_condition, sell_condition, inv, is_sideways) {
+        let signal = null;
+        
+        if (buy_condition) {
+            // Close any short position first
+            if (this.position_size < 0) {
+                this.closePosition(timestamp, price, 'Close Short');
+            }
+            
+            // Open long position
+            const qty = this.calculateQuantity(price);
+            this.position_size = qty;
+            signal = {
+                type: 'BUY',
+                price,
+                quantity: qty,
+                timestamp,
+                inv_value: inv
+            };
+            
+            this.trades.push({
+                ...signal,
+                action: 'entry'
+            });
+        }
+        
+        if (sell_condition) {
+            // Close any long position first
+            if (this.position_size > 0) {
+                this.closePosition(timestamp, price, 'Close Long');
+            }
+            
+            // Open short position
+            const qty = -this.calculateQuantity(price);
+            this.position_size = qty;
+            signal = {
+                type: 'SELL',
+                price,
+                quantity: Math.abs(qty),
+                timestamp,
+                inv_value: inv
+            };
+            
+            this.trades.push({
+                ...signal,
+                action: 'entry'
+            });
+        }
+        
+        return signal;
+    }
+    
+    // Calculate position quantity based on equity percentage
+    calculateQuantity(price) {
+        const equity_to_use = this.capital * (this.qty_percent / 100);
+        return Math.floor(equity_to_use / price);
+    }
+    
+    // Close current position
+    closePosition(timestamp, price, reason) {
+        if (this.position_size === 0) return;
+        
+        const pnl = this.position_size * (price - this.getAvgEntryPrice());
+        this.capital += pnl;
+        
+        this.trades.push({
+            type: this.position_size > 0 ? 'SELL' : 'BUY',
+            price,
+            quantity: Math.abs(this.position_size),
+            timestamp,
+            action: 'exit',
+            pnl,
+            reason
+        });
+        
+        this.position_size = 0;
+    }
+    
+    // Get average entry price (simplified)
+    getAvgEntryPrice() {
+        const entryTrades = this.trades.filter(t => t.action === 'entry');
+        if (entryTrades.length === 0) return 0;
+        
+        const lastEntry = entryTrades[entryTrades.length - 1];
+        return lastEntry.price;
+    }
+    
+    // Get current strategy state
+    getState() {
+        return {
+            position_size: this.position_size,
+            capital: this.capital,
+            total_trades: this.trades.length,
+            current_inv: this.inv_values[this.inv_values.length - 1] || 0,
+            is_sideways: this.atr_values.length > 0 && this.atr_ma_values.length > 0 ? 
+                        (this.atr_values[this.atr_values.length - 1] < 
+                         this.atr_ma_values[this.atr_ma_values.length - 1] * this.atr_threshold) : false
+        };
+    }
+    
+    // Get all trades
+    getTrades() {
+        return [...this.trades];
+    }
+    
+    // Reset strategy
+    reset() {
+        this.position_size = 0;
+        this.capital = this.initial_capital;
+        this.trades = [];
+        this.closes = [];
+        this.highs = [];
+        this.lows = [];
+        this.true_ranges = [];
+        this.sm_values = [];
+        this.diff_values = [];
+        this.smi_values = [];
+        this.v1_values = [];
+        this.v2_values = [];
+        this.inv_values = [];
+        this.atr_values = [];
+        this.atr_ma_values = [];
+        this.ema_states = {};
+    }
+    
+    // Update parameters
+    updateParameters(newParams) {
+        Object.assign(this, newParams);
+    }
+}
+// Initialize the new strategy
+const iftsmiStrategy = new IFTSMIStrategy({
+    initial_capital: CFG.INITIAL_CAPITAL
+});
+
 // =========================================================================================
 // TELEGRAM
 // =========================================================================================
@@ -124,191 +479,6 @@ async function sendTelegramMessage(text) {
     } catch (error) {
         console.error('Failed to send Telegram message:', error);
     }
-}
-
-// =========================================================================================
-// TECHNICAL INDICATORS (PINE SCRIPT TRANSLATION)
-// =========================================================================================
-function getEMA(series, length) {
-    if (series.length < length) {
-        return [];
-    }
-    let ema = [];
-    let alpha = 2 / (length + 1);
-    ema.push(series[0]); // Initial value is the first data point
-    for (let i = 1; i < series.length; i++) {
-        let prevEma = ema[i - 1] !== undefined ? ema[i - 1] : series[i];
-        let newEma = alpha * series[i] + (1 - alpha) * prevEma;
-        ema.push(newEma);
-    }
-    return ema;
-}
-
-function getSMA(series, length) {
-    if (series.length < length) {
-        return [];
-    }
-    let sma = [];
-    for (let i = length - 1; i < series.length; i++) {
-        const subSeries = series.slice(i - length + 1, i + 1);
-        const sum = subSeries.reduce((acc, val) => acc + val, 0);
-        sma.push(sum / length);
-    }
-    return sma;
-}
-
-function getADX(highs, lows, closes, length) {
-    if (highs.length < length + 1) {
-        return { adx: 0, plusDI: 0, minusDI: 0 };
-    }
-
-    const tr = [];
-    const plusDM = [];
-    const minusDM = [];
-    for (let i = 1; i < highs.length; i++) {
-        let h = highs[i], l = lows[i], prevC = closes[i - 1];
-        tr.push(Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC)));
-        plusDM.push(h - highs[i - 1] > lows[i - 1] - l ? Math.max(h - highs[i - 1], 0) : 0);
-        minusDM.push(lows[i - 1] - l > h - highs[i - 1] ? Math.max(lows[i - 1] - l, 0) : 0);
-    }
-
-    const rmaTR = getRMA(tr, length);
-    const rmaPlusDM = getRMA(plusDM, length);
-    const rmaMinusDM = getRMA(minusDM, length);
-
-    const plusDI = rmaPlusDM.map((val, i) => (val / rmaTR[i]) * 100);
-    const minusDI = rmaMinusDM.map((val, i) => (val / rmaTR[i]) * 100);
-
-    const dx = plusDI.map((val, i) => Math.abs(val - minusDI[i]) / (val + minusDI[i]) * 100);
-    const adx = getRMA(dx, length);
-
-    return {
-        adx: adx.length > 0 ? adx[adx.length - 1] : 0,
-        plusDI: plusDI.length > 0 ? plusDI[plusDI.length - 1] : 0,
-        minusDI: minusDI.length > 0 ? minusDI[minusDI.length - 1] : 0,
-    };
-}
-
-function getRMA(series, length) {
-    let rma = [];
-    if (series.length > 0) {
-        rma.push(series[0]);
-    }
-    let alpha = 1 / length;
-    for (let i = 1; i < series.length; i++) {
-        let newRma = alpha * series[i] + (1 - alpha) * rma[i - 1];
-        rma.push(newRma);
-    }
-    return rma;
-}
-
-function cross(series1, series2) {
-    if (series1.length < 2 || series2.length < 2) return false;
-    const last1 = series1.length - 1;
-    const last2 = series2.length - 1;
-    return series1[last1 - 1] < series2[last2 - 1] && series1[last1] > series2[last2];
-}
-
-function crossunder(series1, series2) {
-    if (series1.length < 2 || series2.length < 2) return false;
-    const last1 = series1.length - 1;
-    const last2 = series2.length - 1;
-    // DÜZELTME: Bu satırdaki indeks hatası giderildi.
-    return series1[last1 - 1] > series2[last2 - 1] && series1[last1] < series2[last2];
-}
-
-// =========================================================================================
-// MAIN STRATEGY LOGIC
-// =========================================================================================
-function computeSignals() {
-    // --- Yetersiz veri kontrolü ---
-    if (klines.length < Math.max(CFG.slowLength, CFG.signalLength, CFG.len, 14) + 1) {
-        return { type: 'none', message: 'Yetersiz veri' };
-    }
-
-    const closePrices = klines.map(k => k.close);
-    const highPrices = klines.map(k => k.high);
-    const lowPrices = klines.map(k => k.low);
-    const lastBarIndex = klines.length - 1;
-
-    // --- Gösterge Hesaplamaları ---
-    const fastEma = getEMA(closePrices, CFG.fastLength);
-    const slowEma = getEMA(closePrices, CFG.slowLength);
-    const macdSeries = fastEma.map((val, i) => val - slowEma[i]);
-    const signalSeries = getSMA(macdSeries, CFG.signalLength);
-    const adxResult = getADX(highPrices, lowPrices, closePrices, 14);
-    const adxFilter = adxResult.adx > CFG.adxThreshold;
-
-    const lastMacd = macdSeries[macdSeries.length - 1];
-    const lastSignal = signalSeries[signalSeries.length - 1];
-
-    // --- HH/LH/LL/HL Tespiti (Pine Script'teki mantığın tam çevirisi) ---
-    const macdHighHistory = macdSeries.slice(0, macdSeries.length);
-    const macdLowHistory = macdSeries.slice(0, macdSeries.length);
-
-    function getHighest(series, length) {
-        if (series.length < length) return -Infinity;
-        return Math.max(...series.slice(series.length - length, series.length));
-    }
-
-    function getLowest(series, length) {
-        if (series.length < length) return Infinity;
-        return Math.min(...series.slice(series.length - length, series.length));
-    }
-    
-    // Düzeltme: Pine Script'teki `[1]`, `[2]`, `[3]` referansları, JS'de `length - 2`, `length - 3` vb. olarak çevrildi.
-    const is_hh = macdSeries[lastBarIndex] > macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getHighest(macdHighHistory.slice(0, lastBarIndex -1), CFG.len);
-    const is_lh = macdSeries[lastBarIndex] < macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getHighest(macdHighHistory.slice(0, lastBarIndex -1), CFG.len);
-    const is_hl = macdSeries[lastBarIndex] > macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getLowest(macdLowHistory.slice(0, lastBarIndex -1), CFG.len);
-    const is_ll = macdSeries[lastBarIndex] < macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getLowest(macdLowHistory.slice(0, lastBarIndex -1), CFG.len);
-
-
-    // --- Filtrelere göre pozisyon kapatma veya tersine çevirme ---
-    if (CFG.macdFilterEnabled) {
-        if (botCurrentPosition === 'long' && is_lh) {
-            if (CFG.flipToShortOnLH) {
-                return { type: 'flip_short', message: "LH tespiti: Pozisyonu tersine çevir" };
-            } else if (CFG.exitLongOnLH) {
-                return { type: 'short', message: "LH tespiti: Uzun pozisyonu kapat" };
-            }
-        }
-        if (botCurrentPosition === 'short' && is_hh) {
-            if (CFG.flipToLongOnHH) {
-                return { type: 'flip_long', message: "HH tespiti: Pozisyonu tersine çevir" };
-            } else if (CFG.exitShortOnHH) {
-                return { type: 'long', message: "HH tespiti: Kısa pozisyonu kapat" };
-            }
-        }
-        if (botCurrentPosition === 'long' && is_ll) {
-            if (CFG.flipToShortOnLL) {
-                return { type: 'flip_short', message: "LL tespiti: Pozisyonu tersine çevir" };
-            } else if (CFG.exitLongOnLL) {
-                return { type: 'short', message: "LL tespiti: Uzun pozisyonu kapat" };
-            }
-        }
-        if (botCurrentPosition === 'short' && is_hl) {
-            if (CFG.flipToLongOnHL) {
-                return { type: 'flip_long', message: "HL tespiti: Pozisyonu tersine çevir" };
-            } else if (CFG.exitShortOnHL) {
-                return { type: 'long', message: "HL tespiti: Kısa pozisyonu kapat" };
-            }
-        }
-    }
-
-    // --- Normal Giriş Şartları ---
-    if (cross(macdSeries, signalSeries) && adxFilter) {
-        if (botCurrentPosition !== 'long') {
-            return { type: 'long', message: "AL sinyali: MACD/Sinyal kesişimi ve ADX Filtresi" };
-        }
-    }
-    
-    if (crossunder(macdSeries, signalSeries) && !adxFilter) {
-        if (botCurrentPosition !== 'short') {
-            return { type: 'short', message: "SAT sinyali: MACD/Sinyal kesişimi ve ADX Filtresi" };
-        }
-    }
-
-    return { type: 'none', message: 'Bekleniyor' };
 }
 
 // =========================================================================================
@@ -356,7 +526,7 @@ async function placeOrder(side, signalMessage) {
     }
 
     // Yeni pozisyonu açma
-    if (botCurrentPosition === 'none' || (side === 'BUY' && botCurrentPosition === 'short') || (side === 'SELL' && botCurrentPosition === 'long')) {
+    if (botCurrentPosition === 'none') {
         try {
             const currentPrice = lastClosePrice;
             let quantity = 0;
@@ -409,13 +579,18 @@ async function fetchInitialData() {
 
         klines = initialKlines.map(k => ({
             open: parseFloat(k.open),
-            high: parseFloat(k.h),
-            low: parseFloat(k.l),
-            close: parseFloat(k.close),
+            high: parseFloat(k.high),
+            low: parseFloat(k.low),
+            close: parseFloat(k.c),
             volume: parseFloat(k.v),
             closeTime: k.closeTime
         }));
         console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
+
+        // Yeni strateji ile geçmiş verileri işleyin
+        klines.forEach(k => {
+            iftsmiStrategy.processCandle(k.closeTime, k.open, k.high, k.low, k.close);
+        });
 
         if (!isBotInitialized) {
             sendTelegramMessage(`✅ Bot başlatıldı!\n\n**Mod:** ${isSimulationMode ? 'Simülasyon' : 'Canlı İşlem'}\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
@@ -433,7 +608,7 @@ ws.on('message', async (message) => {
     const data = JSON.parse(message);
     const klineData = data.k;
 
-    if (klineData.x) {
+    if (klineData.x) { // If the bar is closed
         const newBar = {
             open: parseFloat(klineData.o),
             high: parseFloat(klineData.h),
@@ -448,17 +623,24 @@ ws.on('message', async (message) => {
             klines.shift();
         }
 
-        const signal = computeSignals();
-        console.log(`Yeni mum verisi geldi. Fiyat: ${newBar.close}. Sinyal: ${signal.type}`);
+        // Process the new candle and get the signal from the IFTSMI strategy
+        const result = iftsmiStrategy.processCandle(
+            newBar.closeTime,
+            newBar.open,
+            newBar.high,
+            newBar.low,
+            newBar.close
+        );
+        
+        const signal = result.signal;
+        const botState = iftsmiStrategy.getState();
 
-        if (signal.type === 'long' && botCurrentPosition !== 'long') {
-            await placeOrder('BUY', signal.message);
-        } else if (signal.type === 'short' && botCurrentPosition !== 'short') {
-            await placeOrder('SELL', signal.message);
-        } else if (signal.type === 'flip_long' && botCurrentPosition !== 'long') {
-            await placeOrder('BUY', signal.message);
-        } else if (signal.type === 'flip_short' && botCurrentPosition !== 'short') {
-            await placeOrder('SELL', signal.message);
+        console.log(`Yeni mum verisi geldi. Fiyat: ${newBar.close}. Sinyal: ${signal?.type || 'none'}. Pozisyon: ${botState.position_size}`);
+
+        if (signal?.type === 'BUY' && botCurrentPosition !== 'long') {
+            await placeOrder('BUY', 'AL sinyali: IFTSMI');
+        } else if (signal?.type === 'SELL' && botCurrentPosition !== 'short') {
+            await placeOrder('SELL', 'SAT sinyali: IFTSMI');
         }
     }
 });
