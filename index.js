@@ -11,25 +11,191 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // =========================================================================================
+// UT BOT STRATEGY CLASS
+// =========================================================================================
+class UTBotStrategy {
+    constructor(options = {}) {
+        this.a = options.a || 1; // Key Value
+        this.c = options.c || 10; // ATR Period
+        this.h = options.h !== undefined ? options.h : false; // Use Heikin Ashi
+        this.use_filter = options.use_filter !== undefined ? options.use_filter : true;
+        this.atr_ma_period = options.atr_ma_period || 100;
+        this.atr_threshold = options.atr_threshold || 0.7;
+
+        this.initial_capital = options.initial_capital || 100;
+        this.qty_percent = options.qty_percent || 100;
+
+        // Internal state
+        this.klines = [];
+        this.heikinAshiCandles = [];
+        this.trueRanges = [];
+        this.atrValues = [];
+        this.atrMaValues = [];
+        this.xATRTrailingStop = null;
+        this.pos = 0;
+        this.capital = this.initial_capital;
+        this.trades = [];
+        this.position_size = 0;
+    }
+
+    // Helper functions
+    calculateATR(period) {
+        if (this.trueRanges.length < period) return null;
+        const slice = this.trueRanges.slice(-period);
+        const sum = slice.reduce((a, b) => a + b, 0);
+        return sum / period;
+    }
+
+    calculateSMA(values, period) {
+        if (values.length < period) return null;
+        const slice = values.slice(-period);
+        const sum = slice.reduce((a, b) => a + b, 0);
+        return sum / period;
+    }
+
+    // Heikin Ashi Calculation
+    calculateHeikinAshi(open, high, low, close) {
+        let haOpen, haClose, haHigh, haLow;
+        const prevHA = this.heikinAshiCandles.length > 0 ? this.heikinAshiCandles[this.heikinAshiCandles.length - 1] : null;
+
+        if (!prevHA) {
+            haOpen = (open + close) / 2;
+        } else {
+            haOpen = (prevHA.open + prevHA.close) / 2;
+        }
+        haClose = (open + high + low + close) / 4;
+        haHigh = Math.max(high, haOpen, haClose);
+        haLow = Math.min(low, haOpen, haClose);
+
+        return { open: haOpen, high: haHigh, low: haLow, close: haClose };
+    }
+
+    processCandle(timestamp, open, high, low, close) {
+        this.klines.push({ timestamp, open, high, low, close });
+        if (this.klines.length > 500) {
+            this.klines.shift();
+        }
+
+        const prevClose = this.klines.length > 1 ? this.klines[this.klines.length - 2].close : close;
+        const srcCandle = this.h ? this.calculateHeikinAshi(open, high, low, close) : { close, high, low };
+        if (this.h) this.heikinAshiCandles.push(srcCandle);
+        const src = srcCandle.close;
+        const srcHigh = srcCandle.high;
+        const srcLow = srcCandle.low;
+
+        const trueRange = Math.max(
+            srcHigh - srcLow,
+            Math.abs(srcHigh - prevClose),
+            Math.abs(srcLow - prevClose)
+        );
+        this.trueRanges.push(trueRange);
+
+        const xATR = this.calculateATR(this.c);
+        if (!xATR) return { signal: null };
+        const nLoss = this.a * xATR;
+
+        const prevXATRTrailingStop = this.xATRTrailingStop !== null ? this.xATRTrailingStop : src - nLoss;
+        const prevPos = this.pos;
+
+        // Pine Script's Trailing Stop Logic
+        if (src > prevXATRTrailingStop && prevClose > prevXATRTrailingStop) {
+            this.xATRTrailingStop = Math.max(prevXATRTrailingStop, src - nLoss);
+        } else if (src < prevXATRTrailingStop && prevClose < prevXATRTrailingStop) {
+            this.xATRTrailingStop = Math.min(prevXATRTrailingStop, src + nLoss);
+        } else if (src > prevXATRTrailingStop) {
+            this.xATRTrailingStop = src - nLoss;
+        } else {
+            this.xATRTrailingStop = src + nLoss;
+        }
+
+        // Position Logic (1=long, -1=short)
+        if (prevClose < prevXATRTrailingStop && src > prevXATRTrailingStop) {
+            this.pos = 1;
+        } else if (prevClose > prevXATRTrailingStop && src < prevXATRTrailingStop) {
+            this.pos = -1;
+        } else {
+            this.pos = prevPos;
+        }
+
+        // Sideways Filter
+        const currentAtr = this.calculateATR(this.c);
+        if (currentAtr !== null) this.atrValues.push(currentAtr);
+
+        const longTermAtrMa = this.calculateSMA(this.atrValues, this.atr_ma_period);
+        if (longTermAtrMa !== null) this.atrMaValues.push(longTermAtrMa);
+
+        const isSideways = this.use_filter && longTermAtrMa !== null && (currentAtr < longTermAtrMa * this.atr_threshold);
+
+        let signal = null;
+        if (this.pos !== prevPos) {
+            if (this.pos === 1 && !isSideways) {
+                signal = { type: 'BUY', message: 'UT Bot: AL sinyali' };
+            } else if (this.pos === -1 && !isSideways) {
+                signal = { type: 'SELL', message: 'UT Bot: SAT sinyali' };
+            }
+        }
+        
+        return { signal };
+    }
+
+    calculateQuantity(price) {
+        const equity_to_use = this.capital * (this.qty_percent / 100);
+        return equity_to_use / price;
+    }
+    
+    closePosition(price) {
+        if (this.position_size === 0) return;
+        const pnl = this.position_size * (price - this.getAvgEntryPrice());
+        this.capital += pnl;
+        const reason = this.position_size > 0 ? 'Close Long' : 'Close Short';
+        this.trades.push({
+            type: this.position_size > 0 ? 'SELL' : 'BUY',
+            price,
+            quantity: Math.abs(this.position_size),
+            action: 'exit',
+            pnl,
+            reason
+        });
+        this.position_size = 0;
+    }
+
+    openPosition(side, price) {
+        const qty = this.calculateQuantity(price);
+        this.position_size = side === 'BUY' ? qty : -qty;
+        this.trades.push({
+            type: side,
+            price,
+            quantity: qty,
+            action: 'entry'
+        });
+    }
+
+    getAvgEntryPrice() {
+        const entryTrades = this.trades.filter(t => t.action === 'entry');
+        if (entryTrades.length === 0) return 0;
+        const lastEntry = entryTrades[entryTrades.length - 1];
+        return lastEntry.price;
+    }
+}
+
+// =========================================================================================
 // STRATEGY CONFIGURATION
 // =========================================================================================
 const CFG = {
-    // IFTSMI Strategy Parameters (Pine Script defaults)
-    SMIL: 54,
-    wmalength: 6,
-    IEMA: 5,
-    OEMA: 5,
-    level_buy: -0.5,
-    level_sell: 0.8,
+    // UT Bot Strategy Parameters
+    a: 1, 
+    c: 10,
+    h: false, // Heikin Ashi
+    
+    // Sideways Filter Parameters
     use_filter: true,
-    atr_period: 14,
     atr_ma_period: 100,
     atr_threshold: 0.7,
-
+    
     // Bot Configuration
     TRADE_SIZE_PERCENT: 100,
     SYMBOL: process.env.SYMBOL || 'ETHUSDT',
-    INTERVAL: process.env.INTERVAL || '3m',
+    INTERVAL: process.env.INTERVAL || '1m',
     TG_TOKEN: process.env.TG_TOKEN,
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     IS_TESTNET: process.env.IS_TESTNET === 'true',
@@ -40,17 +206,13 @@ const CFG = {
 // GLOBAL STATE
 // =========================================================================================
 let botCurrentPosition = 'none';
-let klines = [];
 let totalNetProfit = 0;
 let isBotInitialized = false;
 
-// API anahtarlarının varlığına göre simülasyon modunu belirliyoruz.
 const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY;
 
-// Simülasyon modu için sahte bir Binance istemcisi oluşturma
 const mockBinanceClient = {
     futuresAccountBalance: async () => {
-        // Mock verisi döndür
         return [{ asset: 'USDT', availableBalance: '1000' }];
     },
     futuresMarketOrder: async ({ side, quantity }) => {
@@ -58,7 +220,6 @@ const mockBinanceClient = {
         return { status: 'FILLED' };
     },
     candles: async ({ symbol, interval, limit }) => {
-        // Simülasyon modunda sembol için sahte mum verileri üret
         const mockCandles = [];
         let price = 4300;
         let now = Date.now();
@@ -78,379 +239,27 @@ const mockBinanceClient = {
         return mockCandles;
     },
     prices: async ({ symbol }) => {
-        const lastPrice = klines.length > 0 ? klines[klines.length - 1].close : 4300;
+        const lastKline = utBotStrategy.klines[utBotStrategy.klines.length - 1];
+        const lastPrice = lastKline ? lastKline.close : 4300;
         return { [symbol]: lastPrice.toString() };
     }
 };
 
-// Mod durumuna göre doğru istemciyi atama
 const binanceClient = isSimulationMode ? mockBinanceClient : Binance({
     apiKey: process.env.BINANCE_API_KEY,
     apiSecret: process.env.BINANCE_SECRET_KEY,
     test: CFG.IS_TESTNET,
 });
 
-// IFTSMIStrategy Class
-class IFTSMIStrategy {
-    constructor(options = {}) {
-        // Default parameters (matching Pine Script defaults)
-        this.SMIL = options.SMIL || 54;
-        this.wmalength = options.wmalength || 6;
-        this.IEMA = options.IEMA || 5;
-        this.OEMA = options.OEMA || 5;
-        this.level_buy = options.level_buy || -0.5;
-        this.level_sell = options.level_sell || 0.8;
-        
-        // Filter settings
-        this.use_filter = options.use_filter !== undefined ? options.use_filter : true;
-        this.atr_period = options.atr_period || 14;
-        this.atr_ma_period = options.atr_ma_period || 100;
-        this.atr_threshold = options.atr_threshold || 0.7;
-        
-        // Strategy settings
-        this.initial_capital = options.initial_capital || 10000;
-        this.qty_percent = options.qty_percent || 100;
-        
-        // Internal state
-        this.position_size = 0;
-        this.capital = this.initial_capital;
-        this.trades = [];
-        
-        // Data arrays for calculations
-        this.closes = [];
-        this.highs = [];
-        this.lows = [];
-        this.true_ranges = [];
-        
-        // Calculation arrays
-        this.sm_values = [];
-        this.diff_values = [];
-        this.smi_values = [];
-        this.v1_values = [];
-        this.v2_values = [];
-        this.inv_values = [];
-        this.atr_values = [];
-        this.atr_ma_values = [];
-        
-        // EMA calculation states
-        this.ema_states = {};
-    }
-    
-    // EMA calculation helper
-    calculateEMA(value, period, key) {
-        if (!this.ema_states[key]) {
-            this.ema_states[key] = {
-                values: [],
-                ema: null
-            };
-        }
-        
-        const state = this.ema_states[key];
-        state.values.push(value);
-        
-        if (state.values.length === 1) {
-            state.ema = value;
-        } else {
-            const multiplier = 2 / (period + 1);
-            state.ema = (value * multiplier) + (state.ema * (1 - multiplier));
-        }
-        
-        return state.ema;
-    }
-    
-    // SMA calculation helper
-    calculateSMA(values, period) {
-        if (values.length < period) return null;
-        const slice = values.slice(-period);
-        return slice.reduce((sum, val) => sum + val, 0) / period;
-    }
-    
-    // WMA calculation helper
-    calculateWMA(values, period) {
-        if (values.length < period) return null;
-        
-        const slice = values.slice(-period);
-        let weightedSum = 0;
-        let weightSum = 0;
-        
-        for (let i = 0; i < slice.length; i++) {
-            const weight = i + 1;
-            weightedSum += slice[i] * weight;
-            weightSum += weight;
-        }
-        
-        return weightedSum / weightSum;
-    }
-    
-    // Lowest value in period
-    getLowest(values, period) {
-        if (values.length < period) return Math.min(...values);
-        const slice = values.slice(-period);
-        return Math.min(...slice);
-    }
-    
-    // Highest value in period
-    getHighest(values, period) {
-        if (values.length < period) return Math.max(...values);
-        const slice = values.slice(-period);
-        return Math.max(...slice);
-    }
-    
-    // True Range calculation
-    calculateTrueRange(high, low, prevClose) {
-        if (prevClose === null) return high - low;
-        
-        const tr1 = high - low;
-        const tr2 = Math.abs(high - prevClose);
-        const tr3 = Math.abs(low - prevClose);
-        
-        return Math.max(tr1, tr2, tr3);
-    }
-    
-    // ATR calculation
-    calculateATR(period) {
-        if (this.true_ranges.length < period) return null;
-        return this.calculateSMA(this.true_ranges, period);
-    }
-    
-    // Check for crossover
-    checkCrossover(current, previous, level) {
-        return previous <= level && current > level;
-    }
-    
-    // Check for crossunder
-    checkCrossunder(current, previous, level) {
-        return previous >= level && current < level;
-    }
-    
-    // Process new candle data
-    processCandle(timestamp, open, high, low, close) {
-        // Store OHLC data
-        this.closes.push(close);
-        this.highs.push(high);
-        this.lows.push(low);
-        
-        // Calculate True Range
-        const prevClose = this.closes.length > 1 ? this.closes[this.closes.length - 2] : null;
-        const tr = this.calculateTrueRange(high, low, prevClose);
-        this.true_ranges.push(tr);
-        
-        // SM calculation (Stochastic Momentum)
-        const LLow = this.getLowest(this.lows, this.SMIL);
-        const HHigh = this.getHighest(this.highs, this.SMIL);
-        const SM = close - 0.5 * (HHigh + LLow);
-        this.sm_values.push(SM);
-        
-        // SMI calculations
-        const avgsm = this.calculateEMA(
-            this.calculateEMA(SM, this.IEMA, `sm_inner_${this.closes.length}`),
-            this.OEMA,
-            `sm_outer_${this.closes.length}`
-        );
-        
-        const diff = HHigh - LLow;
-        this.diff_values.push(diff);
-        
-        const avgdiff = this.calculateEMA(
-            this.calculateEMA(diff, this.IEMA, `diff_inner_${this.closes.length}`),
-            this.OEMA,
-            `diff_outer_${this.closes.length}`
-        );
-        
-        const SMI = avgdiff !== 0 ? 100 * (avgsm / (0.5 * avgdiff)) : 0;
-        this.smi_values.push(SMI);
-        
-        // Inverse Fisher Transform calculations
-        const v1 = 0.1 * SMI;
-        this.v1_values.push(v1);
-        
-        const v2 = this.calculateWMA(this.v1_values, this.wmalength);
-        this.v2_values.push(v2 || 0);
-        
-        const INV = v2 !== null ? (Math.exp(2 * v2) - 1) / (Math.exp(2 * v2) + 1) : 0;
-        this.inv_values.push(INV);
-        
-        // ATR calculations for sideways filter
-        const current_atr = this.calculateATR(this.atr_period);
-        if (current_atr !== null) {
-            this.atr_values.push(current_atr);
-        }
-        
-        const long_term_atr_ma = this.calculateSMA(this.atr_values, this.atr_ma_period);
-        if (long_term_atr_ma !== null) {
-            this.atr_ma_values.push(long_term_atr_ma);
-        }
-        
-        // Sideways market detection
-        const is_sideways = this.use_filter && 
-                           current_atr !== null && 
-                           long_term_atr_ma !== null && 
-                           (current_atr < long_term_atr_ma * this.atr_threshold);
-        
-        // Signal generation
-        let buy_condition = false;
-        let sell_condition = false;
-        
-        if (this.inv_values.length >= 2) {
-            const current_inv = this.inv_values[this.inv_values.length - 1];
-            const previous_inv = this.inv_values[this.inv_values.length - 2];
-            
-            buy_condition = this.checkCrossover(current_inv, previous_inv, this.level_buy) && !is_sideways;
-            sell_condition = this.checkCrossunder(current_inv, previous_inv, this.level_sell) && !is_sideways;
-        }
-        
-        // Execute strategy
-        const signal = this.executeStrategy(timestamp, close, buy_condition, sell_condition, INV, is_sideways);
-        
-        return {
-            timestamp,
-            close,
-            inv: INV,
-            smi: SMI,
-            buy_condition,
-            sell_condition,
-            is_sideways,
-            position_size: this.position_size,
-            signal,
-            atr: current_atr,
-            atr_ma: long_term_atr_ma
-        };
-    }
-    
-    // Strategy execution logic
-    executeStrategy(timestamp, price, buy_condition, sell_condition, inv, is_sideways) {
-        let signal = null;
-        
-        if (buy_condition) {
-            // Close any short position first
-            if (this.position_size < 0) {
-                this.closePosition(timestamp, price, 'Close Short');
-            }
-            
-            // Open long position
-            const qty = this.calculateQuantity(price);
-            this.position_size = qty;
-            signal = {
-                type: 'BUY',
-                price,
-                quantity: qty,
-                timestamp,
-                inv_value: inv
-            };
-            
-            this.trades.push({
-                ...signal,
-                action: 'entry'
-            });
-        }
-        
-        if (sell_condition) {
-            // Close any long position first
-            if (this.position_size > 0) {
-                this.closePosition(timestamp, price, 'Close Long');
-            }
-            
-            // Open short position
-            const qty = -this.calculateQuantity(price);
-            this.position_size = qty;
-            signal = {
-                type: 'SELL',
-                price,
-                quantity: Math.abs(qty),
-                timestamp,
-                inv_value: inv
-            };
-            
-            this.trades.push({
-                ...signal,
-                action: 'entry'
-            });
-        }
-        
-        return signal;
-    }
-    
-    // Calculate position quantity based on equity percentage
-    calculateQuantity(price) {
-        const equity_to_use = this.capital * (this.qty_percent / 100);
-        return Math.floor(equity_to_use / price);
-    }
-    
-    // Close current position
-    closePosition(timestamp, price, reason) {
-        if (this.position_size === 0) return;
-        
-        const pnl = this.position_size * (price - this.getAvgEntryPrice());
-        this.capital += pnl;
-        
-        this.trades.push({
-            type: this.position_size > 0 ? 'SELL' : 'BUY',
-            price,
-            quantity: Math.abs(this.position_size),
-            timestamp,
-            action: 'exit',
-            pnl,
-            reason
-        });
-        
-        this.position_size = 0;
-    }
-    
-    // Get average entry price (simplified)
-    getAvgEntryPrice() {
-        const entryTrades = this.trades.filter(t => t.action === 'entry');
-        if (entryTrades.length === 0) return 0;
-        
-        const lastEntry = entryTrades[entryTrades.length - 1];
-        return lastEntry.price;
-    }
-    
-    // Get current strategy state
-    getState() {
-        return {
-            position_size: this.position_size,
-            capital: this.capital,
-            total_trades: this.trades.length,
-            current_inv: this.inv_values[this.inv_values.length - 1] || 0,
-            is_sideways: this.atr_values.length > 0 && this.atr_ma_values.length > 0 ? 
-                        (this.atr_values[this.atr_values.length - 1] < 
-                         this.atr_ma_values[this.atr_ma_values.length - 1] * this.atr_threshold) : false
-        };
-    }
-    
-    // Get all trades
-    getTrades() {
-        return [...this.trades];
-    }
-    
-    // Reset strategy
-    reset() {
-        this.position_size = 0;
-        this.capital = this.initial_capital;
-        this.trades = [];
-        this.closes = [];
-        this.highs = [];
-        this.lows = [];
-        this.true_ranges = [];
-        this.sm_values = [];
-        this.diff_values = [];
-        this.smi_values = [];
-        this.v1_values = [];
-        this.v2_values = [];
-        this.inv_values = [];
-        this.atr_values = [];
-        this.atr_ma_values = [];
-        this.ema_states = {};
-    }
-    
-    // Update parameters
-    updateParameters(newParams) {
-        Object.assign(this, newParams);
-    }
-}
-// Initialize the new strategy
-const iftsmiStrategy = new IFTSMIStrategy({
-    initial_capital: CFG.INITIAL_CAPITAL
+const utBotStrategy = new UTBotStrategy({
+    a: CFG.a,
+    c: CFG.c,
+    h: CFG.h,
+    use_filter: CFG.use_filter,
+    atr_ma_period: CFG.atr_ma_period,
+    atr_threshold: CFG.atr_threshold,
+    initial_capital: CFG.INITIAL_CAPITAL,
+    qty_percent: CFG.TRADE_SIZE_PERCENT
 });
 
 // =========================================================================================
@@ -485,16 +294,15 @@ async function sendTelegramMessage(text) {
 // ORDER PLACEMENT & TRADING LOGIC
 // =========================================================================================
 async function placeOrder(side, signalMessage) {
-    const lastClosePrice = klines[klines.length - 1]?.close || 0;
+    const lastClosePrice = utBotStrategy.klines[utBotStrategy.klines.length - 1]?.close || 0;
 
     // Mevcut pozisyonu kapatma
-    if (botCurrentPosition !== 'none' && botCurrentPosition !== side.toLowerCase()) {
+    if (utBotStrategy.position_size !== 0) {
         try {
-            const entryPrice = botCurrentPosition === 'long' ? longEntryPrice : shortEntryPrice;
-            const profit = botCurrentPosition === 'long' ? (lastClosePrice - entryPrice) : (entryPrice - lastClosePrice);
-            totalNetProfit += profit;
+            // P&L hesaplaması ve pozisyon kapatma strateji sınıfı içinde yapılır
+            utBotStrategy.closePosition(lastClosePrice);
+            totalNetProfit = utBotStrategy.trades.filter(t => t.action === 'exit').reduce((sum, t) => sum + t.pnl, 0);
             
-            // Eğer gerçek modda değilsek, API çağrısı yapma
             if (!isSimulationMode) {
                 const positions = await binanceClient.futuresAccountBalance();
                 const position = positions.find(p => p.asset === CFG.SYMBOL.replace('USDT', ''));
@@ -514,8 +322,9 @@ async function placeOrder(side, signalMessage) {
                 console.log(`[SİMÜLASYON] Mevcut pozisyon (${botCurrentPosition}) kapatıldı.`);
             }
 
+            const profit = utBotStrategy.trades[utBotStrategy.trades.length - 1].pnl;
             const profitMessage = profit >= 0 ? `+${profit.toFixed(2)} USDT` : `${profit.toFixed(2)} USDT`;
-            const positionCloseMessage = `📉 Pozisyon kapatıldı! ${botCurrentPosition.toUpperCase()}\n\nSon Kapanış Fiyatı: ${lastClosePrice}\nBu İşlemden Kâr/Zarar: ${profitMessage}\n**Toplam Net Kâr: ${totalNetProfit.toFixed(2)} USDT**`;
+            const positionCloseMessage = `📉 Pozisyon kapatıldı! ${botCurrentPosition.toUpperCase()}\n\nSon Kapanış Fiyatı: ${lastClosePrice}\nBu İşlemden Kâr/Zarar: ${profitMessage}\n**Toplam Net Kâr: ${totalNetProfit.toFixed(2)} USDT****`;
             sendTelegramMessage(positionCloseMessage);
             
             botCurrentPosition = 'none';
@@ -526,7 +335,7 @@ async function placeOrder(side, signalMessage) {
     }
 
     // Yeni pozisyonu açma
-    if (botCurrentPosition === 'none') {
+    if (utBotStrategy.position_size === 0) {
         try {
             const currentPrice = lastClosePrice;
             let quantity = 0;
@@ -546,16 +355,9 @@ async function placeOrder(side, signalMessage) {
                 quantity = (CFG.INITIAL_CAPITAL * (CFG.TRADE_SIZE_PERCENT / 100)) / currentPrice;
                 console.log(`[SİMÜLASYON] ${side} emri verildi. Fiyat: ${currentPrice}`);
             }
-
-            if (side === 'BUY') {
-                botCurrentPosition = 'long';
-                longEntryPrice = currentPrice;
-                longEntryBarIndex = klines.length - 1;
-            } else if (side === 'SELL') {
-                botCurrentPosition = 'short';
-                shortEntryPrice = currentPrice;
-                shortEntryBarIndex = klines.length - 1;
-            }
+            
+            utBotStrategy.openPosition(side, currentPrice);
+            botCurrentPosition = side.toLowerCase();
 
             sendTelegramMessage(`🚀 **${side} Emri Gerçekleşti!**\n\n**Sinyal:** ${signalMessage}\n**Fiyat:** ${currentPrice}\n**Miktar:** ${quantity.toFixed(4)}\n**Toplam Net Kâr: ${totalNetProfit.toFixed(2)} USDT**`);
         } catch (error) {
@@ -577,20 +379,11 @@ async function fetchInitialData() {
             limit: 500
         });
 
-        klines = initialKlines.map(k => ({
-            open: parseFloat(k.open),
-            high: parseFloat(k.high),
-            low: parseFloat(k.low),
-            close: parseFloat(k.c),
-            volume: parseFloat(k.v),
-            closeTime: k.closeTime
-        }));
-        console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
-
-        // Yeni strateji ile geçmiş verileri işleyin
-        klines.forEach(k => {
-            iftsmiStrategy.processCandle(k.closeTime, k.open, k.high, k.low, k.close);
+        initialKlines.forEach(k => {
+            utBotStrategy.processCandle(k.closeTime, parseFloat(k.open), parseFloat(k.high), parseFloat(k.low), parseFloat(k.close));
         });
+
+        console.log(`✅ İlk ${utBotStrategy.klines.length} mum verisi yüklendi.`);
 
         if (!isBotInitialized) {
             sendTelegramMessage(`✅ Bot başlatıldı!\n\n**Mod:** ${isSimulationMode ? 'Simülasyon' : 'Canlı İşlem'}\n**Sembol:** ${CFG.SYMBOL}\n**Zaman Aralığı:** ${CFG.INTERVAL}\n**Başlangıç Sermayesi:** ${CFG.INITIAL_CAPITAL} USDT`);
@@ -608,7 +401,7 @@ ws.on('message', async (message) => {
     const data = JSON.parse(message);
     const klineData = data.k;
 
-    if (klineData.x) { // If the bar is closed
+    if (klineData.x) {
         const newBar = {
             open: parseFloat(klineData.o),
             high: parseFloat(klineData.h),
@@ -618,29 +411,15 @@ ws.on('message', async (message) => {
             closeTime: klineData.T
         };
         
-        klines.push(newBar);
-        if (klines.length > 500) {
-            klines.shift();
-        }
-
-        // Process the new candle and get the signal from the IFTSMI strategy
-        const result = iftsmiStrategy.processCandle(
-            newBar.closeTime,
-            newBar.open,
-            newBar.high,
-            newBar.low,
-            newBar.close
-        );
-        
+        const result = utBotStrategy.processCandle(newBar.closeTime, newBar.open, newBar.high, newBar.low, newBar.close);
         const signal = result.signal;
-        const botState = iftsmiStrategy.getState();
-
-        console.log(`Yeni mum verisi geldi. Fiyat: ${newBar.close}. Sinyal: ${signal?.type || 'none'}. Pozisyon: ${botState.position_size}`);
+        
+        console.log(`Yeni mum verisi geldi. Fiyat: ${newBar.close}. Sinyal: ${signal?.type || 'none'}.`);
 
         if (signal?.type === 'BUY' && botCurrentPosition !== 'long') {
-            await placeOrder('BUY', 'AL sinyali: IFTSMI');
+            await placeOrder('BUY', signal.message);
         } else if (signal?.type === 'SELL' && botCurrentPosition !== 'short') {
-            await placeOrder('SELL', 'SAT sinyali: IFTSMI');
+            await placeOrder('SELL', signal.message);
         }
     }
 });
