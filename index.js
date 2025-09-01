@@ -190,11 +190,13 @@ function getADX(highs, lows, closes, length) {
 }
 
 function getRMA(series, length) {
-    let rma = [series[0]];
+    let rma = [];
+    if (series.length > 0) {
+        rma.push(series[0]);
+    }
     let alpha = 1 / length;
     for (let i = 1; i < series.length; i++) {
-        let prevRma = rma[i - 1] !== undefined ? rma[i - 1] : series[i];
-        let newRma = alpha * series[i] + (1 - alpha) * prevRma;
+        let newRma = alpha * series[i] + (1 - alpha) * rma[i - 1];
         rma.push(newRma);
     }
     return rma;
@@ -202,12 +204,17 @@ function getRMA(series, length) {
 
 function cross(series1, series2) {
     if (series1.length < 2 || series2.length < 2) return false;
-    return series1[series1.length - 2] < series2[series2.length - 2] && series1[series1.length - 1] > series2[series2.length - 1];
+    const last1 = series1.length - 1;
+    const last2 = series2.length - 1;
+    return series1[last1 - 1] < series2[last2 - 1] && series1[last1] > series2[last2];
 }
 
 function crossunder(series1, series2) {
     if (series1.length < 2 || series2.length < 2) return false;
-    return series1[series1.length - 2] > series2[series2.length - 2] && series1[series2.length - 1] < series2[series2.length - 1];
+    const last1 = series1.length - 1;
+    const last2 = series2.length - 1;
+    // DÜZELTME: Bu satırdaki indeks hatası giderildi.
+    return series1[last1 - 1] > series2[last2 - 1] && series1[last1] < series2[last2];
 }
 
 // =========================================================================================
@@ -225,7 +232,9 @@ function computeSignals() {
     const lastBarIndex = klines.length - 1;
 
     // --- Gösterge Hesaplamaları ---
-    const macdSeries = getEMA(closePrices, CFG.fastLength).map((emaFast, i) => emaFast - getEMA(closePrices, CFG.slowLength)[i]);
+    const fastEma = getEMA(closePrices, CFG.fastLength);
+    const slowEma = getEMA(closePrices, CFG.slowLength);
+    const macdSeries = fastEma.map((val, i) => val - slowEma[i]);
     const signalSeries = getSMA(macdSeries, CFG.signalLength);
     const adxResult = getADX(highPrices, lowPrices, closePrices, 14);
     const adxFilter = adxResult.adx > CFG.adxThreshold;
@@ -233,40 +242,51 @@ function computeSignals() {
     const lastMacd = macdSeries[macdSeries.length - 1];
     const lastSignal = signalSeries[signalSeries.length - 1];
 
-    // --- HH/LH/LL/HL Tespiti (Pine Script'teki mantığın çevirisi) ---
-    const macdHigh = Math.max(...macdSeries.slice(-CFG.len));
-    const macdLow = Math.min(...macdSeries.slice(-CFG.len));
+    // --- HH/LH/LL/HL Tespiti (Pine Script'teki mantığın tam çevirisi) ---
+    const macdHighHistory = macdSeries.slice(0, macdSeries.length);
+    const macdLowHistory = macdSeries.slice(0, macdSeries.length);
+
+    function getHighest(series, length) {
+        if (series.length < length) return -Infinity;
+        return Math.max(...series.slice(series.length - length, series.length));
+    }
+
+    function getLowest(series, length) {
+        if (series.length < length) return Infinity;
+        return Math.min(...series.slice(series.length - length, series.length));
+    }
     
-    const lhDetected = macdSeries[macdSeries.length - 2] < macdSeries[macdSeries.length - 3] && macdSeries[macdSeries.length - 3] > macdSeries[macdSeries.length - 4] && macdSeries[macdSeries.length - 3] < macdHigh;
-    const hhDetected = macdSeries[macdSeries.length - 2] > macdSeries[macdSeries.length - 3] && macdSeries[macdSeries.length - 3] < macdSeries[macdSeries.length - 4] && macdSeries[macdSeries.length - 3] > macdLow;
-    // LL ve HL için Pine Script mantığı, son 3 barı ve geçmiş `len` barı kullanır.
-    const llDetected = macdSeries[macdSeries.length-2] > macdSeries[macdSeries.length-3] && macdSeries[macdSeries.length-3] < macdSeries[macdSeries.length-4] && macdSeries[macdSeries.length-3] < macdLow;
-    const hlDetected = macdSeries[macdSeries.length-2] > macdSeries[macdSeries.length-3] && macdSeries[macdSeries.length-3] < macdSeries[macdSeries.length-4] && macdSeries[macdSeries.length-3] > macdLow;
+    // Düzeltme: Pine Script'teki `[1]`, `[2]`, `[3]` referansları, JS'de `length - 2`, `length - 3` vb. olarak çevrildi.
+    const is_hh = macdSeries[lastBarIndex] > macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getHighest(macdHighHistory.slice(0, lastBarIndex -1), CFG.len);
+    const is_lh = macdSeries[lastBarIndex] < macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getHighest(macdHighHistory.slice(0, lastBarIndex -1), CFG.len);
+    const is_hl = macdSeries[lastBarIndex] > macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getLowest(macdLowHistory.slice(0, lastBarIndex -1), CFG.len);
+    const is_ll = macdSeries[lastBarIndex] < macdSeries[lastBarIndex - 1] && macdSeries[lastBarIndex - 1] === getLowest(macdLowHistory.slice(0, lastBarIndex -1), CFG.len);
+
 
     // --- Filtrelere göre pozisyon kapatma veya tersine çevirme ---
     if (CFG.macdFilterEnabled) {
-        if (botCurrentPosition === 'long' && lhDetected) {
+        if (botCurrentPosition === 'long' && is_lh) {
             if (CFG.flipToShortOnLH) {
                 return { type: 'flip_short', message: "LH tespiti: Pozisyonu tersine çevir" };
             } else if (CFG.exitLongOnLH) {
                 return { type: 'short', message: "LH tespiti: Uzun pozisyonu kapat" };
             }
         }
-        if (botCurrentPosition === 'short' && hhDetected) {
+        if (botCurrentPosition === 'short' && is_hh) {
             if (CFG.flipToLongOnHH) {
                 return { type: 'flip_long', message: "HH tespiti: Pozisyonu tersine çevir" };
             } else if (CFG.exitShortOnHH) {
                 return { type: 'long', message: "HH tespiti: Kısa pozisyonu kapat" };
             }
         }
-        if (botCurrentPosition === 'long' && llDetected) {
+        if (botCurrentPosition === 'long' && is_ll) {
             if (CFG.flipToShortOnLL) {
                 return { type: 'flip_short', message: "LL tespiti: Pozisyonu tersine çevir" };
             } else if (CFG.exitLongOnLL) {
                 return { type: 'short', message: "LL tespiti: Uzun pozisyonu kapat" };
             }
         }
-        if (botCurrentPosition === 'short' && hlDetected) {
+        if (botCurrentPosition === 'short' && is_hl) {
             if (CFG.flipToLongOnHL) {
                 return { type: 'flip_long', message: "HL tespiti: Pozisyonu tersine çevir" };
             } else if (CFG.exitShortOnHL) {
