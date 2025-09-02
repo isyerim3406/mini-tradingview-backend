@@ -1,9 +1,9 @@
-import WebSocket from 'ws';
-import dotenv from 'dotenv';
-import express from 'express';
-import fetch from 'node-fetch';
-import pkg from 'binance-api-node';
-const Binance = pkg.default || pkg;
+// CommonJS modül sistemi ile gerekli kütüphaneleri dahil ediyoruz
+const WebSocket = require('ws');
+const dotenv = require('dotenv');
+const express = require('express');
+const fetch = require('node-fetch');
+const Binance = require('binance-api-node');
 
 dotenv.config();
 
@@ -283,9 +283,9 @@ class IFTSMIStrategy {
         
         // Sideways market detection
         const is_sideways = this.use_filter && 
-                           current_atr !== null && 
-                           long_term_atr_ma !== null && 
-                           (current_atr < long_term_atr_ma * this.atr_threshold);
+                               current_atr !== null && 
+                               long_term_atr_ma !== null && 
+                               (current_atr < long_term_atr_ma * this.atr_threshold);
         
         // Signal generation
         let buy_condition = false;
@@ -413,8 +413,8 @@ class IFTSMIStrategy {
             total_trades: this.trades.length,
             current_inv: this.inv_values[this.inv_values.length - 1] || 0,
             is_sideways: this.atr_values.length > 0 && this.atr_ma_values.length > 0 ? 
-                        (this.atr_values[this.atr_values.length - 1] < 
-                         this.atr_ma_values[this.atr_ma_values.length - 1] * this.atr_threshold) : false
+                                (this.atr_values[this.atr_values.length - 1] < 
+                                 this.atr_ma_values[this.atr_ma_values.length - 1] * this.atr_threshold) : false
         };
     }
     
@@ -484,6 +484,9 @@ async function sendTelegramMessage(text) {
 // =========================================================================================
 // ORDER PLACEMENT & TRADING LOGIC
 // =========================================================================================
+let longEntryPrice = 0;
+let shortEntryPrice = 0;
+
 async function placeOrder(side, signalMessage) {
     const lastClosePrice = klines[klines.length - 1]?.close || 0;
 
@@ -550,11 +553,9 @@ async function placeOrder(side, signalMessage) {
             if (side === 'BUY') {
                 botCurrentPosition = 'long';
                 longEntryPrice = currentPrice;
-                longEntryBarIndex = klines.length - 1;
             } else if (side === 'SELL') {
                 botCurrentPosition = 'short';
                 shortEntryPrice = currentPrice;
-                shortEntryBarIndex = klines.length - 1;
             }
 
             sendTelegramMessage(`🚀 **${side} Emri Gerçekleşti!**\n\n**Sinyal:** ${signalMessage}\n**Fiyat:** ${currentPrice}\n**Miktar:** ${quantity.toFixed(4)}\n**Toplam Net Kâr: ${totalNetProfit.toFixed(2)} USDT**`);
@@ -581,8 +582,8 @@ async function fetchInitialData() {
             open: parseFloat(k.open),
             high: parseFloat(k.high),
             low: parseFloat(k.low),
-            close: parseFloat(k.c),
-            volume: parseFloat(k.v),
+            close: parseFloat(k.close),
+            volume: parseFloat(k.volume),
             closeTime: k.closeTime
         }));
         console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
