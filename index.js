@@ -87,7 +87,8 @@ async function initialize() {
         console.log("Bot başlatılıyor...");
         await setupBinanceStreams();
         await fetchInitialData();
-        app.listen(3000, () => console.log('Web sunucusu 3000 portunda çalışıyor.'));
+        const port = process.env.PORT || 3000;
+        app.listen(port, () => console.log(`Web sunucusu ${port} portunda çalışıyor.`));
     } catch (e) {
         console.error("Fatal Hata: Bot başlatılamadı.", e);
         process.exit(1);
