@@ -5,7 +5,8 @@ import bodyParser from 'body-parser';
 import Binance from 'binance-api-node';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
-import { BBand, ATR } from 'technicalindicators';
+import pkg from 'technicalindicators';
+const { BBand, ATR } = pkg;
 
 dotenv.config();
 
