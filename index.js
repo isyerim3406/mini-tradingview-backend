@@ -55,6 +55,7 @@ const connectWebSocket = () => {
     
     // Her sembol için ayrı bir WebSocket bağlantısı başlat
     subscriptionCleanups = SYMBOLS.map(symbol => {
+        // ws.candles fonksiyonu bağlantıyı yönetir ve hata durumlarında tekrar dener.
         return client.ws.candles(symbol, '1m', (candle) => {
             // Her sembol için en son mum verisini sakla
             dataStore[symbol] = candle;
@@ -72,31 +73,8 @@ const connectWebSocket = () => {
         });
     });
 
-    // WebSocket kapanma olaylarını ele al
-    client.ws.on('close', (code, reason) => {
-        console.warn(`[BAĞLANTI KESİLDİ] WebSocket bağlantısı kapandı. Kod: ${code}, Sebep: ${reason}`);
-        isWebSocketConnected = false;
-        // Kısa bir gecikmeden sonra yeniden bağlanmayı dene
-        console.log('[YENİDEN BAĞLANTI] 5 saniye içinde yeniden bağlanılıyor...');
-        setTimeout(() => {
-            // Önceki tüm abonelikleri temizle
-            subscriptionCleanups.forEach(clean => clean());
-            subscriptionCleanups = [];
-            connectWebSocket();
-        }, 5000);
-    });
-
-    // WebSocket hata olaylarını ele al
-    client.ws.on('error', (err) => {
-        console.error('[HATA] WebSocket hatası:', err.message);
-        isWebSocketConnected = false;
-        // 'close' olayı işleyicisi, yeniden bağlanma mantığını tetikleyecektir
-    });
-
-    client.ws.on('open', () => {
-        console.log('[BAĞLANTI BAŞARILI] WebSocket bağlantısı başarıyla açıldı.');
-        isWebSocketConnected = true;
-    });
+    // isWebSocketConnected durumunu doğru bir şekilde güncelleyin
+    isWebSocketConnected = true;
 };
 
 // İlk bağlantıyı başlat
