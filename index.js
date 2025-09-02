@@ -43,6 +43,8 @@ let botCurrentPosition = 'none';
 let klines = [];
 let totalNetProfit = 0;
 let isBotInitialized = false;
+let longEntryPrice = 0;
+let shortEntryPrice = 0;
 
 // API anahtarlarının varlığına göre simülasyon modunu belirliyoruz.
 const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY;
@@ -484,8 +486,6 @@ async function sendTelegramMessage(text) {
 // =========================================================================================
 // ORDER PLACEMENT & TRADING LOGIC
 // =========================================================================================
-let longEntryPrice = 0;
-let shortEntryPrice = 0;
 
 async function placeOrder(side, signalMessage) {
     const lastClosePrice = klines[klines.length - 1]?.close || 0;
@@ -571,6 +571,7 @@ async function placeOrder(side, signalMessage) {
 const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
 async function fetchInitialData() {
+    console.log('📚 Binance geçmiş mum verileri yükleniyor...');
     try {
         const initialKlines = await binanceClient.candles({
             symbol: CFG.SYMBOL,
@@ -586,7 +587,7 @@ async function fetchInitialData() {
             volume: parseFloat(k.volume),
             closeTime: k.closeTime
         }));
-        console.log(`✅ İlk ${klines.length} mum verisi yüklendi.`);
+        console.log(`✅ İlk ${klines.length} mum verisi başarıyla yüklendi.`);
 
         // Yeni strateji ile geçmiş verileri işleyin
         klines.forEach(k => {
@@ -599,11 +600,10 @@ async function fetchInitialData() {
         }
 
     } catch (error) {
-        console.error('İlk verileri çekerken hata:', error);
+        console.error('❌ İlk verileri çekerken hata:', error);
+        throw new Error('İlk veri çekme işlemi başarısız oldu.');
     }
 }
-
-fetchInitialData();
 
 ws.on('message', async (message) => {
     const data = JSON.parse(message);
@@ -651,13 +651,39 @@ ws.on('close', () => {
 });
 
 ws.on('error', (error) => {
-    console.error('WebSocket hatası:', error.message);
+    console.error('❌ WebSocket hatası:', error.message);
 });
 
-app.get('/', (req, res) => {
-    res.send('Bot çalışıyor!');
-});
+async function startBot() {
+    console.log('🤖 Bot başlatılıyor...');
+    try {
+        // Gerekli ortam değişkenlerini kontrol et
+        if (!isSimulationMode) {
+            if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY) {
+                throw new Error('Canlı işlem modu için BINANCE_API_KEY ve BINANCE_SECRET_KEY ayarlanmalıdır.');
+            }
+            if (!process.env.TG_TOKEN || !process.env.TG_CHAT_ID) {
+                console.warn('Telegram bildirimleri için TG_TOKEN ve TG_CHAT_ID ayarlanmamış. Bildirimler devre dışı.');
+            }
+        } else {
+            console.log('🚀 API anahtarları bulunamadı. Bot SİMÜLASYON modunda çalışacak.');
+        }
 
-app.listen(PORT, () => {
-    console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor`);
-});
+        await fetchInitialData();
+        
+        app.get('/', (req, res) => {
+            res.send('Bot çalışıyor!');
+        });
+        
+        app.listen(PORT, () => {
+            console.log(`✅ Sunucu http://localhost:${PORT} adresinde çalışıyor`);
+        });
+
+    } catch (error) {
+        console.error('Fatal hata: Bot başlatılamadı.');
+        console.error(error);
+        process.exit(1); // Hata durumunda işlemi sonlandır
+    }
+}
+
+startBot();
