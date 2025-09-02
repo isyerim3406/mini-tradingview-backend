@@ -1,17 +1,41 @@
 {
-"name": "crypto-trading-bot",
-"version": "1.0.0",
-"description": "A crypto trading bot with a pluggable strategy.",
-"main": "index.js",
-"type": "module",
-"scripts": {
-"start": "node index.js"
-},
-"dependencies": {
-"binance-api-node": "^0.12.3",
-"dotenv": "^16.0.3",
-"express": "^4.18.2",
-"node-fetch": "^3.3.0",
-"ws": "^8.12.0"
-}
+  "name": "iftsmi-trading-bot",
+  "version": "1.0.0",
+  "description": "IFTSMI (Inverse Fisher Transform SMI) strategy trading bot for crypto markets",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": [
+    "crypto",
+    "trading",
+    "bot",
+    "iftsmi",
+    "inverse-fisher-transform",
+    "stochastic-momentum-index",
+    "binance",
+    "algorithmic-trading"
+  ],
+  "author": "IFTSMI Strategy Bot",
+  "license": "MIT",
+  "dependencies": {
+    "binance-api-node": "^0.12.3",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.0",
+    "ws": "^8.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/iftsmi-trading-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/iftsmi-trading-bot/issues"
+  },
+  "homepage": "https://github.com/your-username/iftsmi-trading-bot#readme"
 }
