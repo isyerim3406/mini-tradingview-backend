@@ -328,15 +328,12 @@ async def start_http_server():
         if strategy.position_size != 0 and last_price:
             unrealized = strategy.position_size * (last_price - strategy.get_avg_entry_price())
         body = (
-            "Bot çalışıyor 🚀
-"
-            f"Sembol: {CFG['SYMBOL']} | Interval: {CFG['INTERVAL']}
-"
-            f"Capital: {strategy.capital:.2f} | OpenQty: {strategy.position_size:.6f} | Unrealized: {unrealized:.2f}
-"
-            f"Toplam Kapanan PnL: {sum(t['pnl'] for t in strategy.trades if t.get('action')=='exit'):.2f}
-"
-            f"Toplam İşlem: {len(strategy.trades)}"
+    "Bot çalışıyor 🚀\n"
+    f"Sembol: {CFG['SYMBOL']} | Interval: {CFG['INTERVAL']}\n"
+    f"Capital: {strategy.capital:.2f} | OpenQty: {strategy.position_size:.6f} | Unrealized: {unrealized:.2f}\n"
+    f"Toplam Kapanan PnL: {sum(t['pnl'] for t in strategy.trades if t.get('action')=='exit'):.2f}\n"
+    f"Toplam İşlem: {len(strategy.trades)}"
+)
         )
         return web.Response(text=body)
 
@@ -365,3 +362,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
