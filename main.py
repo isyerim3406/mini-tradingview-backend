@@ -228,7 +228,7 @@ async def send_telegram_message(text):
         print(f"Telegram mesajı gönderilirken hata oluştu: {e}")
 
 # =========================================================================================
-# BOT ANA DÖNGÜSÜ (Önce 500 mum geçmişi, sonra WebSocket)
+# BOT ANA DÖNGÜSÜ
 # =========================================================================================
 async def run_bot():
     global bot_current_position, total_net_profit, last_signal_time
@@ -306,7 +306,6 @@ async def run_bot():
                             last_signal_time = now
 
                             log_msg = f"[IFTSMI Python Strategy] 📢 {signal['message']} | Fiyat: {close_price} | Pozisyon: {bot_current_position.upper()}"
-
                             print(log_msg)
                             await send_telegram_message(log_msg)
 
@@ -328,12 +327,11 @@ async def start_http_server():
         if strategy.position_size != 0 and last_price:
             unrealized = strategy.position_size * (last_price - strategy.get_avg_entry_price())
         body = (
-    "Bot çalışıyor 🚀\n"
-    f"Sembol: {CFG['SYMBOL']} | Interval: {CFG['INTERVAL']}\n"
-    f"Capital: {strategy.capital:.2f} | OpenQty: {strategy.position_size:.6f} | Unrealized: {unrealized:.2f}\n"
-    f"Toplam Kapanan PnL: {sum(t['pnl'] for t in strategy.trades if t.get('action')=='exit'):.2f}\n"
-    f"Toplam İşlem: {len(strategy.trades)}"
-)
+            "Bot çalışıyor 🚀\n"
+            f"Sembol: {CFG['SYMBOL']} | Interval: {CFG['INTERVAL']}\n"
+            f"Capital: {strategy.capital:.2f} | OpenQty: {strategy.position_size:.6f} | Unrealized: {unrealized:.2f}\n"
+            f"Toplam Kapanan PnL: {sum(t['pnl'] for t in strategy.trades if t.get('action')=='exit'):.2f}\n"
+            f"Toplam İşlem: {len(strategy.trades)}"
         )
         return web.Response(text=body)
 
@@ -362,4 +360,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
