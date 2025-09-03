@@ -1,9 +1,5 @@
-python-binance==1.0.19
-aiohttp>=3.9.0
-websockets>=10.4
-python-dotenv>=1.0.0
-python-telegram-bot==13.15
-ujson>=5.9.0
-dateparser>=1.1.8
-pytz
-cryptography>=41.0.0
+binance
+python-telegram-bot==20.3
+aiohttp
+python-dotenv
+ta
