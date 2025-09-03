@@ -234,7 +234,7 @@ async function placeOrder(side, signalMessage, price) {
 
         await sendTelegramMessage(
             `${side} Emri Gerçekleşti!\n\n` +
-            `Bot Adı: IFTSMI Python\n` +
+            `Bot Adı: IFTSMI JS\n` +
             `Sembol: ${CFG.SYMBOL.replace('USDT','/USDT')}\n` +
             `Zaman Aralığı: ${CFG.INTERVAL}\n` +
             `Sinyal:${signalMessage}\n` +
@@ -273,3 +273,4 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`🚀 Bot running on port ${PORT}`));
+
