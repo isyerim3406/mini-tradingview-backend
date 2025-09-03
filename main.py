@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import time
+from datetime import datetime
 from binance import AsyncClient, BinanceSocketManager
 from dotenv import load_dotenv
 import telegram
@@ -18,7 +19,6 @@ load_dotenv()
 class IFTSMIStrategy:
     def __init__(self, options=None):
         options = options or {}
-        # --- İndikatör ayarları ---
         self.SMIL = options.get('SMIL', 40)
         self.wmalength = options.get('wmalength', 9)
         self.IEMA = options.get('IEMA', 5)
@@ -30,7 +30,6 @@ class IFTSMIStrategy:
         self.atr_ma_period = options.get('atr_ma_period', 53)
         self.atr_threshold = options.get('atr_threshold', 1)
 
-        # --- Backtest/stream için diziler ---
         self.closes = []
         self.highs = []
         self.lows = []
@@ -42,14 +41,13 @@ class IFTSMIStrategy:
         self.atr_ma_values = []
         self.ema_states = {}
 
-        # --- PnL & pozisyon yönetimi ---
         self.initial_capital = options.get('initial_capital', 100.0)
         self.qty_percent = options.get('qty_percent', 100.0)
         self.capital = float(self.initial_capital)
-        self.position_size = 0.0  # >0 long, <0 short
-        self.trades = []  # {type, price, quantity, action, pnl}
+        self.position_size = 0.0
+        self.trades = []
 
-    # ======= Yardımcı hesaplamalar =======
+    # === Hesaplama metodları (EMA, SMA, WMA vs) ===
     def calculate_ema(self, value, period, key):
         if key not in self.ema_states:
             self.ema_states[key] = {'values': [], 'ema': None}
@@ -97,7 +95,7 @@ class IFTSMIStrategy:
         tr3 = abs(low - prev_close)
         return max(tr1, tr2, tr3)
 
-    # ======= Sinyal üretimi + state güncelleme =======
+    # === Sinyal üretimi ===
     def process_candle(self, ts, open_p, high, low, close_p, prev_close):
         self.closes.append(close_p)
         self.highs.append(high)
@@ -138,9 +136,9 @@ class IFTSMIStrategy:
             cur_inv = self.inv_values[-1]
             prev_inv = self.inv_values[-2]
             if prev_inv <= self.level_buy and cur_inv > self.level_buy and not is_sideways:
-                signal = {'type': 'BUY', 'message': 'IFTSMI: AL sinyali'}
+                signal = {'type': 'BUY', 'message': 'AL Sinyali'}
             elif prev_inv >= self.level_sell and cur_inv < self.level_sell and not is_sideways:
-                signal = {'type': 'SELL', 'message': 'IFTSMI: SAT sinyali'}
+                signal = {'type': 'SELL', 'message': 'SAT Sinyali'}
 
         return {
             'signal': signal,
@@ -151,7 +149,6 @@ class IFTSMIStrategy:
             'is_sideways': is_sideways,
         }
 
-    # ======= PnL & pozisyon =======
     def get_avg_entry_price(self):
         entries = [t for t in self.trades if t['action'] == 'entry']
         return entries[-1]['price'] if entries else 0.0
@@ -170,7 +167,8 @@ class IFTSMIStrategy:
         pnl = self.position_size * (price - self.get_avg_entry_price())
         self.capital += pnl
         self.trades.append({
-            'type': side, 'price': price, 'quantity': abs(self.position_size), 'action': 'exit', 'pnl': pnl
+            'type': side, 'price': price, 'quantity': abs(self.position_size),
+            'action': 'exit', 'pnl': pnl
         })
         self.position_size = 0.0
         return pnl
@@ -179,7 +177,6 @@ class IFTSMIStrategy:
 # BOT AYARLARI
 # =========================================================================================
 CFG = {
-    # IFTSMI parametreleri
     'SMIL': int(os.getenv('SMIL', 40)),
     'wmalength': int(os.getenv('WMALENGTH', 9)),
     'IEMA': int(os.getenv('IEMA', 5)),
@@ -190,31 +187,30 @@ CFG = {
     'atr_period': int(os.getenv('ATR_PERIOD', 14)),
     'atr_ma_period': int(os.getenv('ATR_MA_PERIOD', 53)),
     'atr_threshold': float(os.getenv('ATR_THRESHOLD', 1)),
-
-    # Ticaret ve servis parametreleri
     'TRADE_SIZE_PERCENT': float(os.getenv('TRADE_SIZE_PERCENT', 100)),
     'SYMBOL': os.getenv('SYMBOL', 'ETHUSDT'),
-    'INTERVAL': os.getenv('INTERVAL', '1m'),
-    'IS_TESTNET': os.getenv('IS_TESTNET', 'False').lower() == 'true',
+    'INTERVAL': os.getenv('INTERVAL', '1h'),
     'INITIAL_CAPITAL': float(os.getenv('INITIAL_CAPITAL', 100)),
     'COOLDOWN_SECONDS': int(os.getenv('COOLDOWN_SECONDS', 60*60)),
+    'BOT_NAME': os.getenv('BOT_NAME', 'UT BOT Python'),
+    'MODE': os.getenv('MODE', 'Simülasyon'),
 }
 
-# Global durumlar
 bot_current_position = 'none'
 total_net_profit = 0.0
 last_signal_time = 0.0
 
-# Telegram
 telegram_bot = None
 if os.getenv('TG_TOKEN') and os.getenv('TG_CHAT_ID'):
     telegram_bot = telegram.Bot(token=os.getenv('TG_TOKEN'))
 
-# Strateji
 strategy = IFTSMIStrategy(options={
-    'SMIL': CFG['SMIL'], 'wmalength': CFG['wmalength'], 'IEMA': CFG['IEMA'], 'OEMA': CFG['OEMA'],
-    'level_buy': CFG['level_buy'], 'level_sell': CFG['level_sell'], 'use_filter': CFG['use_filter'],
-    'atr_period': CFG['atr_period'], 'atr_ma_period': CFG['atr_ma_period'], 'atr_threshold': CFG['atr_threshold'],
+    'SMIL': CFG['SMIL'], 'wmalength': CFG['wmalength'],
+    'IEMA': CFG['IEMA'], 'OEMA': CFG['OEMA'],
+    'level_buy': CFG['level_buy'], 'level_sell': CFG['level_sell'],
+    'use_filter': CFG['use_filter'],
+    'atr_period': CFG['atr_period'], 'atr_ma_period': CFG['atr_ma_period'],
+    'atr_threshold': CFG['atr_threshold'],
     'initial_capital': CFG['INITIAL_CAPITAL'], 'qty_percent': CFG['TRADE_SIZE_PERCENT']
 })
 
@@ -223,7 +219,9 @@ async def send_telegram_message(text):
         print("Telegram API token veya chat ID ayarlanmadı. Mesaj atlanıyor.")
         return
     try:
-        await telegram_bot.send_message(chat_id=os.getenv('TG_CHAT_ID'), text=text, parse_mode=constants.ParseMode.MARKDOWN)
+        await telegram_bot.send_message(chat_id=os.getenv('TG_CHAT_ID'),
+                                        text=text,
+                                        parse_mode=constants.ParseMode.MARKDOWN)
     except Exception as e:
         print(f"Telegram mesajı gönderilirken hata oluştu: {e}")
 
@@ -234,13 +232,10 @@ async def run_bot():
     global bot_current_position, total_net_profit, last_signal_time
 
     print("🤖 Bot başlatılıyor...")
-    await send_telegram_message("🤖 Bot Render üzerinde başlatıldı!")
 
     client = await AsyncClient.create()
     bm = BinanceSocketManager(client)
 
-    # --- Başlangıçta geçmiş 500 mum al ---
-    print("📥 Geçmiş 500 mum çekiliyor...")
     candles = await client.get_klines(symbol=CFG['SYMBOL'], interval=CFG['INTERVAL'], limit=500)
     last_signal = None
     prev_close = None
@@ -252,76 +247,71 @@ async def run_bot():
         prev_close = cl
 
     if last_signal:
-        msg = f"📊 Son oluşan sinyal: {last_signal['message']}"
-        print(msg)
+        msg = (
+            f"Bot Başlatıldı!\n"
+            f"Mod:{CFG['MODE']}\n"
+            f"Sembol: {CFG['SYMBOL']}\n"
+            f"Zaman Aralığı: {CFG['INTERVAL']}\n"
+            f"Son Oluşan Sinyal: {last_signal['message']}"
+        )
         await send_telegram_message(msg)
-    else:
-        print("ℹ️ Son 500 mumda sinyal bulunamadı.")
 
-    # --- WebSocket ile yeni mumları dinle ---
     ts = bm.kline_socket(symbol=CFG['SYMBOL'], interval=CFG['INTERVAL'])
     async with ts as stream:
         while True:
-            try:
-                msg = await stream.recv()
-                if msg.get('e') != 'kline':
-                    continue
-                k = msg['k']
-                if k['x']:  # Mum kapanışı olduğunda
-                    timestamp = k['t']
-                    open_price = float(k['o'])
-                    high = float(k['h'])
-                    low = float(k['l'])
-                    close_price = float(k['c'])
+            msg = await stream.recv()
+            if msg.get('e') != 'kline':
+                continue
+            k = msg['k']
+            if k['x']:
+                timestamp = k['t']
+                open_price = float(k['o'])
+                high = float(k['h'])
+                low = float(k['l'])
+                close_price = float(k['c'])
 
-                    print(f"🕒 Yeni mum kapandı: {CFG['SYMBOL']} {CFG['INTERVAL']} close={close_price}")
+                prev_close_ws = strategy.closes[-1] if strategy.closes else None
+                result = strategy.process_candle(timestamp, open_price, high, low, close_price, prev_close_ws)
 
-                    prev_close_ws = strategy.closes[-1] if strategy.closes else None
-                    result = strategy.process_candle(timestamp, open_price, high, low, close_price, prev_close_ws)
+                unrealized = 0.0
+                if strategy.position_size != 0:
+                    unrealized = strategy.position_size * (close_price - strategy.get_avg_entry_price())
 
-                    # Her mum kapanışında PnL (gerçekleşmemiş) bilgisi
-                    unrealized = 0.0
-                    if strategy.position_size != 0:
-                        unrealized = strategy.position_size * (close_price - strategy.get_avg_entry_price())
-                    print(f"💰 Capital: {strategy.capital:.2f} | Unrealized PnL: {unrealized:.2f} | OpenPosQty: {strategy.position_size:.6f}")
+                if result['signal']:
+                    now = time.time()
+                    if last_signal_time != 0 and (now - last_signal_time) < CFG['COOLDOWN_SECONDS']:
+                        continue
+                    signal = result['signal']
+                    closed_pnl = strategy.close_position(close_price)
+                    total_net_profit = sum(t['pnl'] for t in strategy.trades if t.get('action') == 'exit')
 
-                    if result['signal']:
-                        now = time.time()
-                        if last_signal_time != 0 and (now - last_signal_time) < CFG['COOLDOWN_SECONDS']:
-                            print("⏱️ Cooldown sürüyor, sinyal atlandı.")
-                        else:
-                            signal = result['signal']
-                            # Mevcut pozisyonu kapat
-                            closed_pnl = strategy.close_position(close_price)
-                            if closed_pnl != 0:
-                                total_net_profit = sum(t['pnl'] for t in strategy.trades if t.get('action') == 'exit')
-                                close_msg = f"📉 Pozisyon kapatıldı. PnL: {closed_pnl:.2f} USDT | Toplam Net: {total_net_profit:.2f} USDT"
-                                print(close_msg)
-                                await send_telegram_message(close_msg)
+                    side = 'BUY' if signal['type'] == 'BUY' else 'SELL'
+                    strategy.open_position(side, close_price)
+                    bot_current_position = 'long' if side == 'BUY' else 'short'
+                    last_signal_time = now
 
-                            # Yeni pozisyonu aç
-                            side = 'BUY' if signal['type'] == 'BUY' else 'SELL'
-                            strategy.open_position(side, close_price)
-                            bot_current_position = 'long' if side == 'BUY' else 'short'
-                            last_signal_time = now
+                    ts_str = datetime.utcfromtimestamp(timestamp/1000).strftime("%d.%m.%Y - %H:%M")
 
-                            log_msg = f"[IFTSMI Python Strategy] 📢 {signal['message']} | Fiyat: {close_price} | Pozisyon: {bot_current_position.upper()}"
-                            print(log_msg)
-                            await send_telegram_message(log_msg)
-
-            except Exception as e:
-                print(f"⚠️ WebSocket hata: {e}, 5 sn sonra tekrar denenecek...")
-                await asyncio.sleep(5)
-                break
+                    msg = (
+                        f"{side} Emri Gerçekleşti!\n\n"
+                        f"Bot Adı: {CFG['BOT_NAME']}\n"
+                        f"Sembol: {CFG['SYMBOL']}\n"
+                        f"Zaman Aralığı: {CFG['INTERVAL']}\n"
+                        f"Sinyal:{signal['message']}\n"
+                        f"Fiyat:{close_price}\n"
+                        f"Zaman : {ts_str}\n"
+                        f"Bu İşlemden Kar/Zarar : {closed_pnl:.2f} USDT\n"
+                        f"Toplam Net Kar/Zarar : {total_net_profit:.2f} USDT"
+                    )
+                    await send_telegram_message(msg)
 
     await client.close_connection()
 
 # =========================================================================================
-# HTTP SERVER (Render için)
+# HTTP SERVER
 # =========================================================================================
 async def start_http_server():
     async def handle_root(request):
-        # Basit durum özeti
         last_price = strategy.closes[-1] if strategy.closes else 0
         unrealized = 0.0
         if strategy.position_size != 0 and last_price:
