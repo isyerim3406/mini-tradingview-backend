@@ -5,12 +5,13 @@ from binance.client import Client
 from binance.enums import *
 from strategy import compute_signals
 from dotenv import load_dotenv
+import telegram
+from telegram import constants
+from datetime import datetime
 
 # =========================================================================================
 # BOT AYARLARI
 # =========================================================================================
-# Pine Script'teki 'Görsel Ayarlar' ve 'Diğer Ayarlar' grupları burada tanımlanır.
-# Ortam değişkenlerini (environment variables) yükle
 load_dotenv()
 
 CFG = {
@@ -35,11 +36,10 @@ CFG = {
     "ENTRY_SIGNAL_TYPE": os.getenv("ENTRY_SIGNAL_TYPE", 'BBMC+ATR Bands'),
     "M_BARS_BUY": int(os.getenv("M_BARS_BUY", 1)),
     "N_BARS_SELL": int(os.getenv("N_BARS_SELL", 3)),
+    "BOT_NAME": "SSHL Strategy Python",
+    "MODE": "Simülasyon",
 }
 
-# =========================================================================================
-# DURUM TAKİBİ VE BAŞLATMA
-# =========================================================================================
 client = Client(CFG["BINANCE_API_KEY"], CFG["BINANCE_SECRET_KEY"])
 
 klines = []
@@ -48,9 +48,32 @@ long_entry_price = None
 long_entry_bar_index = None
 short_entry_price = None
 short_entry_bar_index = None
+total_net_profit = 0.0
 
+telegram_bot = None
+if os.getenv("TG_TOKEN") and os.getenv("TG_CHAT_ID"):
+    telegram_bot = telegram.Bot(token=os.getenv("TG_TOKEN"))
+
+# =========================================================================================
+# TELEGRAM MESAJ FONKSİYONU
+# =========================================================================================
+async def send_telegram_message(text):
+    if not telegram_bot or not os.getenv("TG_CHAT_ID"):
+        print("Telegram ayarlı değil.")
+        return
+    try:
+        await telegram_bot.send_message(
+            chat_id=os.getenv("TG_CHAT_ID"),
+            text=text,
+            parse_mode=constants.ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        print(f"Telegram mesajı gönderilemedi: {e}")
+
+# =========================================================================================
+# GEÇMİŞ VERİ ÇEKME
+# =========================================================================================
 def get_historical_klines():
-    """Binance'dan geçmiş mum verilerini çeker."""
     print(f"Geçmiş veri çekiliyor: {CFG['SYMBOL']} {CFG['INTERVAL']}")
     try:
         raw_klines = client.get_historical_klines(
@@ -70,8 +93,10 @@ def get_historical_klines():
         print(f"❌ Geçmiş veri çekilirken hata: {e}")
         return []
 
+# =========================================================================================
+# BAR İŞLEME
+# =========================================================================================
 def process_bar(new_bar):
-    """Yeni bir mum geldiğinde sinyalleri işler ve işlemleri gerçekleştirir."""
     global klines, position, long_entry_price, long_entry_bar_index, short_entry_price, short_entry_bar_index
 
     klines.append(new_bar)
@@ -79,11 +104,10 @@ def process_bar(new_bar):
         klines.pop(0)
 
     df = pd.DataFrame(klines)
-    
     signals = compute_signals(df, CFG, position, long_entry_price, long_entry_bar_index, short_entry_price, short_entry_bar_index)
-    
-    print(f"Anlık fiyat: {new_bar['close']:.4f}. Sinyal: {signals['type'].upper()}")
-    
+
+    print(f"🕒 Yeni bar alındı | Anlık fiyat: {new_bar['close']:.4f}. Sinyal: {signals['type'].upper()}")
+
     if signals["type"] == "buy" and position != 'long':
         execute_trade("BUY", signals["message"], new_bar['close'])
     elif signals["type"] == "sell" and position != 'short':
@@ -93,46 +117,59 @@ def process_bar(new_bar):
     elif signals["type"] == "flip_short":
         execute_trade("SELL", signals["message"], new_bar['close'])
 
+# =========================================================================================
+# TRADE İŞLEMLERİ
+# =========================================================================================
 def execute_trade(side, message, price):
-    """Gerçek alım/satım emrini verir ve pozisyonu günceller."""
-    global position, long_entry_price, long_entry_bar_index, short_entry_price, short_entry_bar_index
-    
-    try:
-        # Piyasada işlem yapmak için quantity'yi ayarlayın
-        # Örneğin, 100 USDT sermaye ile
-        # quantity = 100 / price
-        
-        print(f"🤖 Emir veriliyor: {side} {CFG['SYMBOL']} - {message}")
-        
-        # Binance ile emir verme kısmı (gerçek işlem için bu satırları etkinleştirin)
-        # order = client.create_order(
-        #     symbol=CFG["SYMBOL"],
-        #     side=SIDE_BUY if side == "BUY" else SIDE_SELL,
-        #     type=ORDER_TYPE_MARKET,
-        #     quantity=CFG["TRADE_SIZE"]
-        # )
-        # print(f"✅ Emir başarıyla verildi: {order['orderId']}")
+    global position, long_entry_price, long_entry_bar_index, short_entry_price, short_entry_bar_index, total_net_profit
 
-        # Pozisyonu güncelle
+    try:
         current_bar_index = len(klines) - 1
+        pnl = 0.0
+
+        if position != 'none':
+            if position == 'long':
+                pnl = price - long_entry_price
+            elif position == 'short':
+                pnl = short_entry_price - price
+            total_net_profit += pnl
+
         if side == "BUY":
             position = 'long'
             long_entry_price = price
             long_entry_bar_index = current_bar_index
             short_entry_price = None
             short_entry_bar_index = None
-        else: # SELL
+        else:  # SELL
             position = 'short'
             short_entry_price = price
             short_entry_bar_index = current_bar_index
             long_entry_price = None
             long_entry_bar_index = None
-            
+
+        now_str = datetime.now().strftime("%d.%m.%Y - %H:%M")
+        profit_pct = (pnl / price * 100) if price else 0
+        net_pct = (total_net_profit / price * 100) if price else 0
+
+        msg = (
+            f"{side} Emri Gerçekleşti!\n\n"
+            f"Bot Adı: {CFG['BOT_NAME']}\n"
+            f"Sembol: {CFG['SYMBOL'].replace('USDT','/USDT')}\n"
+            f"Zaman Aralığı: {CFG['INTERVAL']}\n"
+            f"Sinyal:{message}\n"
+            f"Fiyat:{price}\n"
+            f"Zaman : {now_str}\n"
+            f"Bu İşlemden Kar/Zarar : % {profit_pct:.2f} ({pnl:.2f} USDT)\n"
+            f"Toplam Net Kar/Zarar : % {net_pct:.2f} ({total_net_profit:.2f} USDT)"
+        )
+        import asyncio
+        asyncio.run(send_telegram_message(msg))
+
     except Exception as e:
         print(f"❌ Emir verilirken hata oluştu: {e}")
 
 # =========================================================================================
-# ANA ÇALIŞMA DÖNGÜSÜ
+# ANA DÖNGÜ
 # =========================================================================================
 def main():
     global klines
@@ -141,6 +178,16 @@ def main():
     from binance import ThreadedWebsocketManager
     twm = ThreadedWebsocketManager(CFG["BINANCE_API_KEY"], CFG["BINANCE_SECRET_KEY"])
     twm.start()
+
+    # Bot başlatıldı mesajı
+    start_msg = (
+        f"Bot Başlatıldı!\n"
+        f"Mod:{CFG['MODE']}\n"
+        f"Sembol: {CFG['SYMBOL']}\n"
+        f"Zaman Aralığı: {CFG['INTERVAL']}\n"
+    )
+    import asyncio
+    asyncio.run(send_telegram_message(start_msg))
 
     def handle_socket_message(msg):
         if msg['e'] == 'kline':
