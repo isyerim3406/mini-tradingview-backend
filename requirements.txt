@@ -1,5 +1,0 @@
-binance
-python-telegram-bot==20.3
-aiohttp
-python-dotenv
-ta
