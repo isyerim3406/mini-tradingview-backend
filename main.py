@@ -214,7 +214,7 @@ async def run_bot():
                     net_pct = (total_net_profit / CFG['INITIAL_CAPITAL']) * 100
 
                     await send_telegram_message(
-                        f"{signal['type']} Emri Gerçekleşti!\n\n"
+                        f"**{signal['type']} Emri Gerçekleşti!**\n\n"
                         f"Bot Adı: {CFG['BOT_NAME']}\n"
                         f"Sembol: {CFG['SYMBOL']}\n"
                         f"Zaman Aralığı: {CFG['INTERVAL']}\n"
@@ -249,5 +249,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
