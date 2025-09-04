@@ -192,12 +192,10 @@ async def run_bot():
                 continue
             k = msg['k']
             
-            # Bu log, her gelen fiyat verisi için anlık olarak çalışır ve botun çalıştığını gösterir.
-            print(f"Güncel Fiyat: {float(k['c']):.2f}")
-
             if k['x']:
                 close_price = float(k['c'])
-                # Bu log sadece mum kapandığında çalışır. Örneğin, 1 saatlik mum için her saat başında bir kez görünür.
+                # Bu log, yalnızca mum kapandığında çalışır ve botun çalıştığını gösterir.
+                # Örneğin, 1 saatlik mum için her saat başında bir kez görünür.
                 print(f"📊 Yeni bar alındı. Kapanış: {close_price}")
 
                 result = strategy.process_candle(k['t'], float(k['o']), float(k['h']), float(k['l']), close_price, strategy.closes[-1] if strategy.closes else None)
