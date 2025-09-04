@@ -177,7 +177,7 @@ async def run_bot():
         prev_close = cl
 
     await send_telegram_message(
-        f"{CFG['BOT_NAME']} Başladı!**\n"
+        f"**{CFG['BOT_NAME']} Başladı!**\n"
         f"Mod:{CFG['MODE']}\n"
         f"Sembol: {CFG['SYMBOL']}\n"
         f"Zaman Aralığı: {CFG['INTERVAL']}\n"
@@ -249,4 +249,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
