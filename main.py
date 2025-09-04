@@ -1,3 +1,4 @@
+import asyncio
 import math
 
 class IFTSMIStrategy:
@@ -29,20 +30,17 @@ class IFTSMIStrategy:
         self.ema_diff_inner = None
         self.ema_diff_outer = None
 
-    # EMA calculation (Pinescript’s ta.ema)
     def calc_ema(self, value, prev_ema, length):
         if prev_ema is None:
             return value
         multiplier = 2 / (length + 1)
         return value * multiplier + prev_ema * (1 - multiplier)
 
-    # SMA calculation
     def calc_sma(self, values, length):
         if len(values) < length:
             return None
         return sum(values[-length:]) / length
 
-    # WMA calculation (Pinescript’s ta.wma)
     def calc_wma(self, values, length):
         if len(values) < length:
             return None
@@ -50,7 +48,6 @@ class IFTSMIStrategy:
         weights = [i+1 for i in range(length)]
         return sum(v*w for v, w in zip(vals, weights)) / sum(weights)
 
-    # lowest/ highest
     def get_lowest(self, values, length):
         if len(values) < length:
             return None
@@ -61,7 +58,6 @@ class IFTSMIStrategy:
             return None
         return max(values[-length:])
 
-    # ATR calculation
     def calc_true_range(self, high, low, prev_close):
         if prev_close is None:
             return high - low
@@ -71,43 +67,33 @@ class IFTSMIStrategy:
         self.closes.append(c)
         self.highs.append(h)
         self.lows.append(l)
-        # True Range
         tr = self.calc_true_range(h, l, prev_close)
         self.true_ranges.append(tr)
 
-        # LLow & HHigh
         LLow = self.get_lowest(self.lows, self.SMIL)
         HHigh = self.get_highest(self.highs, self.SMIL)
         if LLow is None or HHigh is None:
             return {'signal': None}
 
-        # SM calculation
         SM = c - 0.5 * (HHigh + LLow)
-
-        # EMA for SM (inner then outer)
         self.ema_sm_inner = self.calc_ema(SM, self.ema_sm_inner, self.IEMA)
         self.ema_sm_outer = self.calc_ema(self.ema_sm_inner, self.ema_sm_outer, self.OEMA)
         avgsm = self.ema_sm_outer
 
-        # diff and EMA for diff
         diff = HHigh - LLow
         self.ema_diff_inner = self.calc_ema(diff, self.ema_diff_inner, self.IEMA)
         self.ema_diff_outer = self.calc_ema(self.ema_diff_inner, self.ema_diff_outer, self.OEMA)
         avgdiff = self.ema_diff_outer
 
-        # SMI calculation
         SMI = 100 * (avgsm / (0.5 * avgdiff)) if avgdiff not in (None, 0) else 0
         self.smi_values.append(SMI)
 
-        # v1 & v2 (wma)
         v1 = 0.1 * SMI
         self.v1_values.append(v1)
         v2 = self.calc_wma(self.v1_values, self.wmalength)
-        # INV calculation
         inv = (math.exp(2 * v2) - 1) / (math.exp(2 * v2) + 1) if v2 is not None else 0
         self.inv_values.append(inv)
 
-        # ATR & ATR MA
         atr = self.calc_sma(self.true_ranges, self.atr_period)
         if atr is not None:
             self.atr_values.append(atr)
@@ -115,19 +101,33 @@ class IFTSMIStrategy:
         if atr_ma is not None:
             self.atr_ma_values.append(atr_ma)
 
-        # Sideways Filter
         is_sideways = self.use_filter and atr is not None and atr_ma is not None and atr < atr_ma * self.atr_threshold
 
-        # Signal logic
         signal = None
         if len(self.inv_values) >= 2:
             prev_inv, cur_inv = self.inv_values[-2], self.inv_values[-1]
-            # Pinescript crossover/crossunder mantığı:
-            # Crossover: prev <= level_buy and cur > level_buy
-            # Crossunder: prev >= level_sell and cur < level_sell
             if prev_inv <= self.level_buy and cur_inv > self.level_buy and not is_sideways:
                 signal = {'type': 'BUY', 'message': 'AL Sinyali'}
             elif prev_inv >= self.level_sell and cur_inv < self.level_sell and not is_sideways:
                 signal = {'type': 'SELL', 'message': 'SAT Sinyali'}
 
         return {'signal': signal}
+
+async def main():
+    print("Bot başlatıldı!")
+    strategy = IFTSMIStrategy()
+    # Test için örnek bir mum dizisi (gerçek bot kodunda Binance'den veri çekmen gerekir)
+    candles = [
+        # ts, o, h, l, c, prev_close
+        (1, 100, 105, 95, 102, None),
+        (2, 102, 106, 100, 104, 102),
+        (3, 104, 108, 101, 106, 104),
+        # ... (daha fazla mum eklersen sinyaller oluşabilir)
+    ]
+    for candle in candles:
+        result = strategy.process_candle(*candle)
+        print(f"Candle: {candle} -> Signal: {result['signal']}")
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
