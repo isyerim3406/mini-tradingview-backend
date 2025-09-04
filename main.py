@@ -1,7 +1,7 @@
 import asyncio
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from binance import AsyncClient, BinanceSocketManager
 from dotenv import load_dotenv
 import telegram
@@ -191,8 +191,13 @@ async def run_bot():
             if msg.get('e') != 'kline':
                 continue
             k = msg['k']
+            
+            # Bu log, her gelen fiyat verisi için anlık olarak çalışır ve botun çalıştığını gösterir.
+            print(f"Güncel Fiyat: {float(k['c']):.2f}")
+
             if k['x']:
                 close_price = float(k['c'])
+                # Bu log sadece mum kapandığında çalışır. Örneğin, 1 saatlik mum için her saat başında bir kez görünür.
                 print(f"📊 Yeni bar alındı. Kapanış: {close_price}")
 
                 result = strategy.process_candle(k['t'], float(k['o']), float(k['h']), float(k['l']), close_price, strategy.closes[-1] if strategy.closes else None)
@@ -209,7 +214,7 @@ async def run_bot():
                     bot_current_position = 'long' if signal['type'] == 'BUY' else 'short'
                     last_signal_time = now
 
-                    ts_str = datetime.utcfromtimestamp(k['t']/1000).strftime("%d.%m.%Y - %H:%M")
+                    ts_str = datetime.fromtimestamp(k['t']/1000, timezone.utc).strftime("%d.%m.%Y - %H:%M")
                     pnl_pct = (pnl / CFG['INITIAL_CAPITAL']) * 100
                     net_pct = (total_net_profit / CFG['INITIAL_CAPITAL']) * 100
 
