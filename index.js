@@ -157,7 +157,7 @@ class UTBotStrategy {
 }
 
 // =========================================================================================
-// STRATEGY CONFIGURATION
+// CONFIG
 // =========================================================================================
 const CFG = {
     a: 1,
@@ -177,15 +177,14 @@ const CFG = {
 };
 
 // =========================================================================================
-// GLOBAL STATE
+// STATE
 // =========================================================================================
 let botCurrentPosition = 'none';
-let totalNetProfit = 0;
 let isBotInitialized = false;
 
 const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY;
 
-const mockBinanceClient = {
+const binanceClient = isSimulationMode ? {
     candles: async ({ symbol, interval, limit }) => {
         const mockCandles = [];
         let price = 4300;
@@ -199,79 +198,60 @@ const mockBinanceClient = {
                 low: Math.min(open, close).toFixed(2),
                 close: close.toFixed(2),
                 closeTime: now - (limit - i) * 60 * 1000,
-                volume: (1000 + Math.random() * 500).toFixed(2),
             });
             price = close;
         }
         return mockCandles;
-    },
-    prices: async ({ symbol }) => {
-        const lastKline = utBotStrategy.klines[utBotStrategy.klines.length - 1];
-        const lastPrice = lastKline ? lastKline.close : 4300;
-        return { [symbol]: lastPrice.toString() };
     }
-};
-
-const binanceClient = isSimulationMode ? mockBinanceClient : Binance({
+} : Binance({
     apiKey: process.env.BINANCE_API_KEY,
     apiSecret: process.env.BINANCE_SECRET_KEY,
     test: CFG.IS_TESTNET,
 });
 
-const utBotStrategy = new UTBotStrategy({
-    a: CFG.a,
-    c: CFG.c,
-    h: CFG.h,
-    use_filter: CFG.use_filter,
-    atr_ma_period: CFG.atr_ma_period,
-    atr_threshold: CFG.atr_threshold,
-    initial_capital: CFG.INITIAL_CAPITAL,
-    qty_percent: CFG.TRADE_SIZE_PERCENT
-});
+const utBotStrategy = new UTBotStrategy(CFG);
 
 // =========================================================================================
 // TELEGRAM
 // =========================================================================================
 async function sendTelegramMessage(text) {
     if (!CFG.TG_TOKEN || !CFG.TG_CHAT_ID) return;
-    const telegramApiUrl = `https://api.telegram.org/bot${CFG.TG_TOKEN}/sendMessage`;
+    const url = `https://api.telegram.org/bot${CFG.TG_TOKEN}/sendMessage`;
     const payload = { chat_id: CFG.TG_CHAT_ID, text, parse_mode: 'Markdown' };
     try {
-        await fetch(telegramApiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    } catch (error) {
-        console.error('Telegram mesajı gönderilemedi:', error);
+        await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } catch (e) {
+        console.error('Telegram mesajı gönderilemedi:', e);
     }
 }
 
 // =========================================================================================
-// DATA FETCH
+// INITIAL DATA
 // =========================================================================================
 async function fetchInitialData() {
-    try {
-        const initialKlines = await binanceClient.candles({
-            symbol: CFG.SYMBOL,
-            interval: CFG.INTERVAL,
-            limit: 500
-        });
+    const klines = await binanceClient.candles({
+        symbol: CFG.SYMBOL,
+        interval: CFG.INTERVAL,
+        limit: 500
+    });
 
-        initialKlines.forEach(k => {
-            utBotStrategy.processCandle(k.closeTime, parseFloat(k.open), parseFloat(k.high), parseFloat(k.low), parseFloat(k.close));
-        });
+    let lastSignal = null;
+    klines.forEach(k => {
+        const res = utBotStrategy.processCandle(k.closeTime, parseFloat(k.open), parseFloat(k.high), parseFloat(k.low), parseFloat(k.close));
+        if (res.signal) lastSignal = res.signal;
+    });
 
-        console.log(`✅ İlk ${utBotStrategy.klines.length} mum verisi yüklendi.`);
+    console.log(`✅ İlk ${utBotStrategy.klines.length} mum yüklendi.`);
 
-        if (!isBotInitialized) {
-            await sendTelegramMessage(
-                `✅ *${CFG.BOT_NAME} Başlatıldı!*\n\n` +
-                `Mod: ${isSimulationMode ? 'Simülasyon' : 'Canlı İşlem'}\n` +
-                `Sembol: ${CFG.SYMBOL}\n` +
-                `Zaman Aralığı: ${CFG.INTERVAL}\n` +
-                `Başlangıç Sermayesi: ${CFG.INITIAL_CAPITAL} USDT`
-            );
-            isBotInitialized = true;
-        }
-    } catch (error) {
-        console.error('İlk verileri çekerken hata:', error);
+    if (!isBotInitialized) {
+        await sendTelegramMessage(
+            `✅ *${CFG.BOT_NAME} Başlatıldı!*\n\n` +
+            `Mod: ${isSimulationMode ? 'Simülasyon' : 'Canlı İşlem'}\n` +
+            `Sembol: ${CFG.SYMBOL}\n` +
+            `Zaman Aralığı: ${CFG.INTERVAL}\n` +
+            `Son Oluşan Sinyal: ${lastSignal ? lastSignal.message : "Yok"}`
+        );
+        isBotInitialized = true;
     }
 }
 
@@ -282,37 +262,37 @@ fetchInitialData();
 // =========================================================================================
 const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${CFG.SYMBOL.toLowerCase()}@kline_${CFG.INTERVAL}`);
 
-ws.on('message', async (message) => {
-    const data = JSON.parse(message);
-    const klineData = data.k;
-
-    if (klineData.x) {
+ws.on('message', async msg => {
+    const data = JSON.parse(msg);
+    const k = data.k;
+    if (k.x) {
         const newBar = {
-            open: parseFloat(klineData.o),
-            high: parseFloat(klineData.h),
-            low: parseFloat(klineData.l),
-            close: parseFloat(klineData.c),
-            closeTime: klineData.T
+            open: parseFloat(k.o),
+            high: parseFloat(k.h),
+            low: parseFloat(k.l),
+            close: parseFloat(k.c),
+            closeTime: k.T
         };
 
-        const result = utBotStrategy.processCandle(newBar.closeTime, newBar.open, newBar.high, newBar.low, newBar.close);
-        const signal = result.signal;
+        // 📊 Her bar kapanışında log
+        console.log(`📊 Yeni bar alındı. Kapanış: ${newBar.close}`);
 
-        if (signal?.type === 'BUY' && botCurrentPosition !== 'long') {
+        const res = utBotStrategy.processCandle(newBar.closeTime, newBar.open, newBar.high, newBar.low, newBar.close);
+        if (res.signal?.type === 'BUY' && botCurrentPosition !== 'long') {
             botCurrentPosition = 'long';
-            await sendTelegramMessage(`🚀 *BUY Emri Gerçekleşti!*\n\nBot Adı: ${CFG.BOT_NAME}\nSinyal: ${signal.message}\nFiyat: ${newBar.close}`);
-        } else if (signal?.type === 'SELL' && botCurrentPosition !== 'short') {
+            await sendTelegramMessage(`🚀 *BUY Emri Gerçekleşti!*\n\nBot Adı: ${CFG.BOT_NAME}\nSinyal: ${res.signal.message}\nFiyat: ${newBar.close}`);
+        } else if (res.signal?.type === 'SELL' && botCurrentPosition !== 'short') {
             botCurrentPosition = 'short';
-            await sendTelegramMessage(`🔻 *SELL Emri Gerçekleşti!*\n\nBot Adı: ${CFG.BOT_NAME}\nSinyal: ${signal.message}\nFiyat: ${newBar.close}`);
+            await sendTelegramMessage(`🔻 *SELL Emri Gerçekleşti!*\n\nBot Adı: ${CFG.BOT_NAME}\nSinyal: ${res.signal.message}\nFiyat: ${newBar.close}`);
         }
     }
 });
 
-ws.on('close', () => console.log('❌ WebSocket kapandı. Yeniden bağlan...'));
-ws.on('error', (error) => console.error('WebSocket hatası:', error.message));
+ws.on('close', () => console.log('❌ WebSocket kapandı.'));
+ws.on('error', e => console.error('WebSocket hatası:', e.message));
 
 // =========================================================================================
 // SERVER
 // =========================================================================================
-app.get('/', (req, res) => res.send('Bot çalışıyor!'));
+app.get('/', (req, res) => res.send('Bot çalışıyor 🚀'));
 app.listen(PORT, () => console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor`));
