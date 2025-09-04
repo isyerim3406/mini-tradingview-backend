@@ -14,7 +14,6 @@ const PORT = process.env.PORT || 3000;
 // =========================================================================================
 // IFTSMI STRATEGY CLASS
 // =========================================================================================
-
 class IFTSMIStrategy {
     constructor(options = {}) {
         this.SMIL = options.SMIL || 54;
@@ -195,12 +194,12 @@ const CFG = {
     TG_CHAT_ID: process.env.TG_CHAT_ID,
     INITIAL_CAPITAL: 100,
     TRADE_SIZE_PERCENT: 100,
+    BOT_NAME: "IFTSMI Strategy JS"
 };
 
 let botCurrentPosition = 'none';
 let totalNetProfit = 0;
 let isBotInitialized = false;
-const isSimulationMode = !process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY;
 
 const iftsmiStrategy = new IFTSMIStrategy({
     initial_capital: CFG.INITIAL_CAPITAL,
@@ -221,6 +220,30 @@ async function sendTelegramMessage(text) {
 }
 
 // =========================================================================================
+// INITIAL DATA
+// =========================================================================================
+async function fetchInitialData() {
+    // Binance'ten geçmiş verileri çekmiyoruz, sadece log ve mesaj
+    let lastSignal = null;
+    if (iftsmiStrategy.inv_values.length > 0) {
+        const last = iftsmiStrategy.inv_values[iftsmiStrategy.inv_values.length - 1];
+        lastSignal = last > 0 ? { message: "AL Sinyali" } : { message: "SAT Sinyali" };
+    }
+
+    if (!isBotInitialized) {
+        await sendTelegramMessage(
+            `✅ Bot Başlatıldı!\n` +
+            `Bot Adı: ${CFG.BOT_NAME}\n` +
+            `Sembol: ${CFG.SYMBOL.replace('USDT','/USDT')}\n` +
+            `Zaman Aralığı: ${CFG.INTERVAL}\n` +
+            `Son Oluşan Sinyal: ${lastSignal ? lastSignal.message : "Yok"}`
+        );
+        isBotInitialized = true;
+    }
+}
+fetchInitialData();
+
+// =========================================================================================
 // TRADING LOGIC
 // =========================================================================================
 async function placeOrder(side, signalMessage, price) {
@@ -234,7 +257,7 @@ async function placeOrder(side, signalMessage, price) {
 
         await sendTelegramMessage(
             `${side} Emri Gerçekleşti!\n\n` +
-            `Bot Adı: IFTSMI JS\n` +
+            `Bot Adı: ${CFG.BOT_NAME}\n` +
             `Sembol: ${CFG.SYMBOL.replace('USDT','/USDT')}\n` +
             `Zaman Aralığı: ${CFG.INTERVAL}\n` +
             `Sinyal:${signalMessage}\n` +
@@ -258,6 +281,7 @@ ws.on('message', async (message) => {
     const data = JSON.parse(message);
     const k = data.k;
     if (k.x) {
+        console.log(`📊 Yeni bar alındı. Kapanış: ${k.c}`);
         const res = iftsmiStrategy.processCandle(k.t, parseFloat(k.o), parseFloat(k.h), parseFloat(k.l), parseFloat(k.c));
         if (res.signal) {
             await placeOrder(res.signal.type, res.signal.message, parseFloat(k.c));
@@ -269,8 +293,7 @@ ws.on('message', async (message) => {
 // EXPRESS
 // =========================================================================================
 app.get('/', (req, res) => {
-    res.json({ bot: 'IFTSMI Strategy Bot', pos: botCurrentPosition, net: totalNetProfit });
+    res.json({ bot: CFG.BOT_NAME, pos: botCurrentPosition, net: totalNetProfit });
 });
 
 app.listen(PORT, () => console.log(`🚀 Bot running on port ${PORT}`));
-
